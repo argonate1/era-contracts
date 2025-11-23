@@ -1,4 +1,5 @@
 import "@matterlabs/hardhat-zksync-solc";
+import "@matterlabs/hardhat-zksync-deploy";
 import "@matterlabs/hardhat-zksync-verify";
 import "@nomicfoundation/hardhat-chai-matchers";
 import "@matterlabs/hardhat-zksync-node";
@@ -13,10 +14,11 @@ if (!process.env.CHAIN_ETH_NETWORK) {
 
 export default {
   zksolc: {
-    version: "1.5.11",
+    version: "1.5.15",
     compilerSource: "binary",
     settings: {
       isSystem: true,
+      compilerPath: process.env.HOME + "/.zksync/zksolc-macosx-arm64-v1.5.15",
     },
   },
   solidity: {
@@ -27,6 +29,12 @@ export default {
     localhost: {
       // era-test-node default url
       url: "http://127.0.0.1:8011",
+      ethNetwork: "localhost",
+      zksync: true,
+    },
+    zkstackLocal: {
+      // zkstack server on port 3050
+      url: "http://127.0.0.1:3050",
       ethNetwork: "localhost",
       zksync: true,
     },

@@ -7,19 +7,24 @@ solc_version = "0.8.28"
 cache_path = "cache-forge"
 via_ir = true
 evm_version = "paris"
-ignored_error_codes = ["missing-receive-ether", "code-size"]
-ignored_warnings_from = ["test", "contracts/dev-contracts"]
+optimizer = true
+optimizer_runs = 200
+ignored_error_codes = ["missing-receive-ether", "code-size", 2519]
+ignored_warnings_from = ["test", "contracts/dev-contracts", "lib"]
 remappings = [
     "forge-std/=lib/forge-std/src/",
     "foundry-test/=test/foundry/",
     "@openzeppelin/contracts-v4/=lib/openzeppelin-contracts-v4/contracts/",
     "@openzeppelin/contracts-upgradeable-v4/=lib/openzeppelin-contracts-upgradeable-v4/contracts/",
     "@matterlabs/zksync-contracts/=lib/@matterlabs/zksync-contracts/",
+    "system-contracts/=../system-contracts/",
 ]
 fs_permissions = [
     { access = "read", path = "zkout" },
     { access = "read", path = "../system-contracts/bootloader/build/artifacts" },
-    { access = "read", path = "../system-contracts/artifacts-zk/contracts-preprocessed" }
+    { access = "read", path = "../system-contracts/artifacts-zk/contracts-preprocessed" },
+    { access = "read", path = "script/ghost/config" },
+    { access = "read-write", path = "script/ghost/output" }
 ]
 
 [profile.default.zksync] 

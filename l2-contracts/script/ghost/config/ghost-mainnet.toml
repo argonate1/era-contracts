@@ -1,0 +1,25 @@
+# Ghost Protocol Mainnet Deployment Configuration
+# Usage: forge script script/ghost/DeployGhost.s.sol --sig "run(string)" "mainnet" --broadcast --verify
+
+[ghost]
+# Production mode - uses real Groth16 verifier
+test_mode = false
+
+# Ethereum Mainnet chain ID
+l1_chain_id = 1
+
+# L2 Asset Router address (ZKsync Era mainnet)
+l2_asset_router = "0x0000000000000000000000000000000000010003"
+
+[deployer]
+# Private key MUST be loaded from environment: GHOST_DEPLOYER_PRIVATE_KEY
+# DO NOT commit private keys to version control
+
+[network]
+# ZKsync Era mainnet RPC
+rpc_url = "https://mainnet.era.zksync.io"
+
+[verification]
+# Etherscan API key for contract verification
+# Load from ETHERSCAN_API_KEY environment variable
+etherscan_url = "https://api-era.zksync.network/api"
