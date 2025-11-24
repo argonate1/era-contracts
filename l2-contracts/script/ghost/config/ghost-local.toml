@@ -1,0 +1,22 @@
+# Ghost Protocol Local/Testnet Deployment Configuration
+# Usage: forge script script/ghost/DeployGhost.s.sol --sig "run(string)" "local"
+
+[ghost]
+# Test mode - if true, verifier accepts all proofs (ONLY for testing!)
+test_mode = true
+
+# L1 chain ID for asset ID computation
+l1_chain_id = 9
+
+# L2 Asset Router address (ZKsync predeployed)
+# On local devnet, use placeholder - will be replaced with actual during deployment
+l2_asset_router = "0x0000000000000000000000000000000000010003"
+
+[deployer]
+# Private key will be loaded from environment: GHOST_DEPLOYER_PRIVATE_KEY
+# Or use Foundry's default test account for local testing
+
+[network]
+# RPC URL - override with --rpc-url flag or GHOST_RPC_URL env var
+# Local ZKsync devnet default
+rpc_url = "http://localhost:3050"

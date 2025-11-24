@@ -1,0 +1,318 @@
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.28;
+
+import {Test, console2} from "forge-std/Test.sol";
+import {GhostETH} from "system-contracts/contracts/GhostETH.sol";
+import {CommitmentTree} from "../../../../contracts/ghost/CommitmentTree.sol";
+import {NullifierRegistry} from "../../../../contracts/ghost/NullifierRegistry.sol";
+import {GhostVerifier} from "../../../../contracts/ghost/GhostVerifier.sol";
+import {GhostHash} from "../../../../contracts/ghost/libraries/GhostHash.sol";
+
+/**
+ * @title GhostETHE2E
+ * @notice End-to-end tests for GhostETH system contract
+ * @dev Tests native ETH ghosting flow
+ */
+contract GhostETHE2E is Test {
+    // ============ Contracts ============
+    GhostETH public ghostETH;
+    CommitmentTree public commitmentTree;
+    NullifierRegistry public nullifierRegistry;
+    GhostVerifier public verifier;
+
+    // ============ Actors ============
+    address public deployer;
+    address public alice;
+    address public bob;
+    address public charlie;
+    address public relayer;
+    address public attacker;
+
+    // ============ Constants ============
+    uint256 public constant TREE_DEPTH = 20;
+
+    // ============ Events ============
+    event Ghosted(address indexed from, uint256 amount, bytes32 indexed commitment, uint256 leafIndex);
+    event Redeemed(uint256 amount, address indexed recipient, bytes32 indexed nullifier);
+    event PartialRedeemed(uint256 redeemAmount, address indexed recipient, bytes32 indexed oldNullifier, bytes32 indexed newCommitment, uint256 newLeafIndex);
+
+    // ============ Voucher Structure ============
+    struct ETHVoucher {
+        bytes32 secret;
+        bytes32 nullifier;
+        bytes32 commitment;
+        uint256 leafIndex;
+        uint256 amount;
+    }
+
+    function setUp() public {
+        deployer = address(this);
+        alice = makeAddr("alice");
+        bob = makeAddr("bob");
+        charlie = makeAddr("charlie");
+        relayer = makeAddr("relayer");
+        attacker = makeAddr("attacker");
+
+        // Fund actors with ETH
+        vm.deal(alice, 100 ether);
+        vm.deal(bob, 100 ether);
+        vm.deal(charlie, 100 ether);
+        vm.deal(relayer, 10 ether);
+        vm.deal(attacker, 10 ether);
+
+        // Deploy infrastructure
+        commitmentTree = new CommitmentTree();
+        nullifierRegistry = new NullifierRegistry();
+        verifier = new GhostVerifier(true); // Test mode
+
+        // Deploy GhostETH
+        ghostETH = new GhostETH();
+        ghostETH.initialize(
+            address(commitmentTree),
+            address(nullifierRegistry),
+            address(verifier)
+        );
+
+        // Fund GhostETH contract (it holds ETH in escrow)
+        vm.deal(address(ghostETH), 1000 ether);
+
+        // Authorize GhostETH
+        commitmentTree.authorizeInserter(address(ghostETH));
+        nullifierRegistry.authorizeMarker(address(ghostETH));
+    }
+
+    // ============ Helpers ============
+
+    function _generateETHVoucher(uint256 amount, uint256 leafIndex) internal view returns (ETHVoucher memory) {
+        bytes32 secret = keccak256(abi.encodePacked(block.timestamp, msg.sender, leafIndex, "eth_secret"));
+        bytes32 nullifier = keccak256(abi.encodePacked(block.timestamp, msg.sender, leafIndex, "eth_nullifier"));
+        // ETH uses address(0) as the token address
+        bytes32 commitment = GhostHash.computeCommitment(secret, nullifier, amount, address(0));
+
+        return ETHVoucher({
+            secret: secret,
+            nullifier: nullifier,
+            commitment: commitment,
+            leafIndex: leafIndex,
+            amount: amount
+        });
+    }
+
+    function _buildMerkleProof(uint256 leafIndex) internal view returns (
+        bytes32[] memory pathElements,
+        uint256[] memory pathIndices
+    ) {
+        pathElements = new bytes32[](TREE_DEPTH);
+        pathIndices = new uint256[](TREE_DEPTH);
+
+        uint256 currentIndex = leafIndex;
+        for (uint256 i = 0; i < TREE_DEPTH; i++) {
+            pathElements[i] = commitmentTree.getZeroValue(i);
+            pathIndices[i] = currentIndex % 2;
+            currentIndex = currentIndex / 2;
+        }
+    }
+
+    function _generateDummyProof() internal pure returns (bytes memory) {
+        return abi.encodePacked(bytes32(uint256(1)), bytes32(uint256(2)));
+    }
+
+    // ============ E2E Tests ============
+
+    function test_E2E_GhostETH_BasicFlow() public {
+        console2.log("=== E2E: GhostETH Basic Flow ===");
+
+        uint256 ghostAmount = 5 ether;
+        uint256 aliceBalanceBefore = alice.balance;
+
+        // Step 1: Generate voucher
+        uint256 nextLeaf = commitmentTree.getNextLeafIndex();
+        ETHVoucher memory voucher = _generateETHVoucher(ghostAmount, nextLeaf);
+
+        // Step 2: Alice ghosts ETH
+        vm.prank(alice);
+        vm.expectEmit(true, true, true, true);
+        emit Ghosted(alice, ghostAmount, voucher.commitment, 0);
+
+        uint256 leafIndex = ghostETH.ghost{value: ghostAmount}(voucher.commitment);
+        voucher.leafIndex = leafIndex;
+
+        console2.log("Alice ghosted", ghostAmount / 1e18, "ETH");
+        assertEq(alice.balance, aliceBalanceBefore - ghostAmount, "Alice balance should decrease");
+        assertEq(ghostETH.totalGhosted(), ghostAmount, "Total ghosted should increase");
+
+        // Step 3: Bob redeems via relayer
+        uint256 bobBalanceBefore = bob.balance;
+        bytes32 merkleRoot = commitmentTree.getRoot();
+        (bytes32[] memory pathElements, uint256[] memory pathIndices) = _buildMerkleProof(voucher.leafIndex);
+
+        vm.prank(relayer);
+        vm.expectEmit(true, true, true, true);
+        emit Redeemed(ghostAmount, bob, voucher.nullifier);
+
+        ghostETH.redeem(
+            ghostAmount,
+            bob,
+            voucher.nullifier,
+            merkleRoot,
+            pathElements,
+            pathIndices,
+            _generateDummyProof()
+        );
+
+        console2.log("Bob redeemed", ghostAmount / 1e18, "ETH via relayer");
+        assertEq(bob.balance, bobBalanceBefore + ghostAmount, "Bob should receive ETH");
+        assertTrue(nullifierRegistry.isSpent(voucher.nullifier), "Nullifier should be spent");
+
+        console2.log("=== SUCCESS: GhostETH basic flow completed ===");
+    }
+
+    function test_E2E_GhostETH_PartialRedeem() public {
+        console2.log("=== E2E: GhostETH Partial Redemption ===");
+
+        uint256 totalAmount = 10 ether;
+        uint256 firstRedeem = 3 ether;
+        uint256 secondRedeem = 7 ether;
+
+        // Ghost total amount
+        ETHVoucher memory v1 = _generateETHVoucher(totalAmount, commitmentTree.getNextLeafIndex());
+        vm.prank(alice);
+        v1.leafIndex = ghostETH.ghost{value: totalAmount}(v1.commitment);
+
+        // Partial redeem
+        bytes32 merkleRoot = commitmentTree.getRoot();
+        (bytes32[] memory pathElements, uint256[] memory pathIndices) = _buildMerkleProof(v1.leafIndex);
+
+        // Generate new voucher for remainder
+        ETHVoucher memory v2 = _generateETHVoucher(secondRedeem, commitmentTree.getNextLeafIndex());
+
+        vm.prank(relayer);
+        uint256 newLeafIndex = ghostETH.redeemPartial(
+            firstRedeem,
+            totalAmount,
+            bob,
+            v1.nullifier,
+            v2.commitment,
+            merkleRoot,
+            pathElements,
+            pathIndices,
+            _generateDummyProof()
+        );
+
+        console2.log("Partial redeem:", firstRedeem / 1e18, "ETH to Bob");
+        v2.leafIndex = newLeafIndex;
+
+        // Verify Bob received first part
+        assertEq(bob.balance, 100 ether + firstRedeem, "Bob should receive first redeem");
+        assertTrue(nullifierRegistry.isSpent(v1.nullifier), "Old nullifier spent");
+        assertFalse(nullifierRegistry.isSpent(v2.nullifier), "New nullifier not spent");
+
+        // Redeem remainder
+        merkleRoot = commitmentTree.getRoot();
+        (pathElements, pathIndices) = _buildMerkleProof(v2.leafIndex);
+
+        vm.prank(relayer);
+        ghostETH.redeem(
+            secondRedeem,
+            charlie,
+            v2.nullifier,
+            merkleRoot,
+            pathElements,
+            pathIndices,
+            _generateDummyProof()
+        );
+
+        console2.log("Final redeem:", secondRedeem / 1e18, "ETH to Charlie");
+        assertEq(charlie.balance, 100 ether + secondRedeem, "Charlie should receive remainder");
+
+        console2.log("=== SUCCESS: GhostETH partial redemption completed ===");
+    }
+
+    function test_E2E_GhostETH_DoubleSpendPrevention() public {
+        console2.log("=== E2E: GhostETH Double-Spend Prevention ===");
+
+        uint256 ghostAmount = 5 ether;
+        ETHVoucher memory voucher = _generateETHVoucher(ghostAmount, commitmentTree.getNextLeafIndex());
+
+        vm.prank(alice);
+        voucher.leafIndex = ghostETH.ghost{value: ghostAmount}(voucher.commitment);
+
+        // First redeem succeeds
+        bytes32 merkleRoot = commitmentTree.getRoot();
+        (bytes32[] memory pathElements, uint256[] memory pathIndices) = _buildMerkleProof(voucher.leafIndex);
+
+        vm.prank(relayer);
+        ghostETH.redeem(
+            ghostAmount,
+            bob,
+            voucher.nullifier,
+            merkleRoot,
+            pathElements,
+            pathIndices,
+            _generateDummyProof()
+        );
+
+        // Second redeem fails
+        vm.prank(attacker);
+        vm.expectRevert(GhostETH.NullifierAlreadySpent.selector);
+        ghostETH.redeem(
+            ghostAmount,
+            attacker,
+            voucher.nullifier,
+            merkleRoot,
+            pathElements,
+            pathIndices,
+            _generateDummyProof()
+        );
+
+        console2.log("=== SUCCESS: Double-spend correctly prevented ===");
+    }
+
+    function test_E2E_GhostETH_Statistics() public {
+        // Ghost some ETH
+        ETHVoucher memory v1 = _generateETHVoucher(5 ether, commitmentTree.getNextLeafIndex());
+        vm.prank(alice);
+        v1.leafIndex = ghostETH.ghost{value: 5 ether}(v1.commitment);
+
+        ETHVoucher memory v2 = _generateETHVoucher(3 ether, commitmentTree.getNextLeafIndex());
+        vm.prank(bob);
+        v2.leafIndex = ghostETH.ghost{value: 3 ether}(v2.commitment);
+
+        // Check stats
+        (uint256 ghosted, uint256 redeemed, uint256 outstanding) = ghostETH.getGhostStats();
+        assertEq(ghosted, 8 ether, "Total ghosted");
+        assertEq(redeemed, 0, "Nothing redeemed yet");
+        assertEq(outstanding, 8 ether, "All outstanding");
+
+        // Redeem one
+        bytes32 merkleRoot = commitmentTree.getRoot();
+        (bytes32[] memory pathElements, uint256[] memory pathIndices) = _buildMerkleProof(v1.leafIndex);
+
+        vm.prank(relayer);
+        ghostETH.redeem(5 ether, charlie, v1.nullifier, merkleRoot, pathElements, pathIndices, _generateDummyProof());
+
+        // Check updated stats
+        (ghosted, redeemed, outstanding) = ghostETH.getGhostStats();
+        assertEq(ghosted, 8 ether, "Total ghosted unchanged");
+        assertEq(redeemed, 5 ether, "5 ETH redeemed");
+        assertEq(outstanding, 3 ether, "3 ETH outstanding");
+    }
+
+    function testFuzz_E2E_GhostETH_AnyAmount(uint256 amount) public {
+        vm.assume(amount > 0 && amount <= 50 ether); // Bounded by alice's balance
+
+        ETHVoucher memory voucher = _generateETHVoucher(amount, commitmentTree.getNextLeafIndex());
+
+        vm.prank(alice);
+        voucher.leafIndex = ghostETH.ghost{value: amount}(voucher.commitment);
+
+        bytes32 merkleRoot = commitmentTree.getRoot();
+        (bytes32[] memory pathElements, uint256[] memory pathIndices) = _buildMerkleProof(voucher.leafIndex);
+
+        uint256 bobBalanceBefore = bob.balance;
+        vm.prank(relayer);
+        ghostETH.redeem(amount, bob, voucher.nullifier, merkleRoot, pathElements, pathIndices, _generateDummyProof());
+
+        assertEq(bob.balance, bobBalanceBefore + amount);
+    }
+}

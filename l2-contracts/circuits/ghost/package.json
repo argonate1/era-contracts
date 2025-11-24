@@ -1,0 +1,31 @@
+{
+  "name": "@ghostchain/circuits",
+  "version": "1.0.0",
+  "description": "ZK circuits for Ghost protocol - enables unlinkable token redemption",
+  "scripts": {
+    "setup": "npm run setup:redeem && npm run setup:partial",
+    "setup:redeem": "npm run compile:redeem && npm run trusted-setup:redeem",
+    "setup:partial": "npm run compile:partial && npm run trusted-setup:partial",
+    "compile:redeem": "mkdir -p build/redeem && circom redeem.circom --r1cs --wasm --sym -o build/redeem",
+    "compile:partial": "mkdir -p build/redeemPartial && circom redeemPartial.circom --r1cs --wasm --sym -o build/redeemPartial",
+    "trusted-setup:redeem": "cd build/redeem && snarkjs groth16 setup redeem.r1cs ../../powersOfTau28_hez_final_16.ptau redeem_0000.zkey && snarkjs zkey contribute redeem_0000.zkey redeem_final.zkey --name=\"Ghost Protocol\" -v -e=\"$(date)\" && snarkjs zkey export verificationkey redeem_final.zkey verification_key.json",
+    "trusted-setup:partial": "cd build/redeemPartial && snarkjs groth16 setup redeemPartial.r1cs ../../powersOfTau28_hez_final_16.ptau redeemPartial_0000.zkey && snarkjs zkey contribute redeemPartial_0000.zkey redeemPartial_final.zkey --name=\"Ghost Protocol\" -v -e=\"$(date)\" && snarkjs zkey export verificationkey redeemPartial_final.zkey verification_key.json",
+    "export:verifier": "npm run export:verifier:redeem && npm run export:verifier:partial",
+    "export:verifier:redeem": "snarkjs zkey export solidityverifier build/redeem/redeem_final.zkey ../../contracts/ghost/verifiers/RedeemVerifier.sol && npm run fix:verifier:redeem",
+    "export:verifier:partial": "snarkjs zkey export solidityverifier build/redeemPartial/redeemPartial_final.zkey ../../contracts/ghost/verifiers/PartialRedeemVerifier.sol && npm run fix:verifier:partial",
+    "fix:verifier:redeem": "sed -i '' 's/pragma solidity ^0.6.11;/pragma solidity 0.8.28;/' ../../contracts/ghost/verifiers/RedeemVerifier.sol && sed -i '' 's/contract Groth16Verifier/contract RedeemVerifier/' ../../contracts/ghost/verifiers/RedeemVerifier.sol",
+    "fix:verifier:partial": "sed -i '' 's/pragma solidity ^0.6.11;/pragma solidity 0.8.28;/' ../../contracts/ghost/verifiers/PartialRedeemVerifier.sol && sed -i '' 's/contract Groth16Verifier/contract PartialRedeemVerifier/' ../../contracts/ghost/verifiers/PartialRedeemVerifier.sol",
+    "download:ptau": "wget -q https://hermez.s3-eu-west-1.amazonaws.com/powersOfTau28_hez_final_16.ptau && echo 'Downloaded powersOfTau28_hez_final_16.ptau'",
+    "build:all": "npm run download:ptau && npm run setup && npm run export:verifier",
+    "test": "npm run test:redeem && npm run test:partial",
+    "test:redeem": "node scripts/test-redeem.js",
+    "test:partial": "node scripts/test-partial.js",
+    "clean": "rm -rf build",
+    "info": "echo 'Circuits: redeem.circom, redeemPartial.circom' && echo 'Output: build/*/'"
+  },
+  "dependencies": {
+    "circomlib": "^2.0.5",
+    "circomlibjs": "^0.1.7",
+    "snarkjs": "^0.7.3"
+  }
+}
