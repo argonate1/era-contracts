@@ -27,6 +27,8 @@ fs_permissions = [
     { access = "read-write", path = "script/ghost/output" }
 ]
 
-[profile.default.zksync] 
+[profile.default.zksync]
 enable_eravm_extensions = true
 zksolc = "1.5.11"
+# Skip scripts that contain unsupported assembly for zkEVM
+skip_files = ["script/DeployGhostRealZK.s.sol"]

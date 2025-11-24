@@ -1,0 +1,15 @@
+{
+  "network": "271",
+  "deployer": "0x721C8Ec0EC29BEfFF39415DF075BB06c753De498",
+  "timestamp": "2025-11-24T12:23:30.205Z",
+  "contracts": {
+    "redeemVerifier": "0x4295a4bf62036445F22d39549792cf37a04D0396",
+    "partialRedeemVerifier": "0x42BE01dED88aC628627d8b7A9C14c9199539327c",
+    "verifier": "0xD24B322d7e3966562D0fC9685DBad0D54BAa3C1b",
+    "nullifierRegistry": "0x89141d805f466d3D9318218A0346146925e440BE",
+    "commitmentTree": "0x3AF561c80E895161733C421324E99E9D6Ed34132",
+    "ghostToken": "0xB49B8E3a4E5492Ee5F945c072aba990989Ae2a6A"
+  },
+  "testMode": false,
+  "hashFunction": "Poseidon"
+}

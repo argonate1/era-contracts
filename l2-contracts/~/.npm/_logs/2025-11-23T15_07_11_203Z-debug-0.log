@@ -1,0 +1,25 @@
+0 verbose cli /opt/homebrew/Cellar/node/24.3.0/bin/node /opt/homebrew/lib/node_modules/npm/bin/npm-cli.js
+1 info using npm@11.4.2
+2 info using node@v24.3.0
+3 silly config load:file:/opt/homebrew/lib/node_modules/npm/npmrc
+4 info config found workspace root at /Users/nathanpeterson/Desktop/Development/zksync-era/contracts
+5 silly config load:file:/Users/nathanpeterson/Desktop/Development/zksync-era/contracts/.npmrc
+6 silly config load:file:/Users/nathanpeterson/Desktop/Development/zksync-era/contracts/l2-contracts/~/.npmrc
+7 silly config load:file:/opt/homebrew/etc/npmrc
+8 verbose title npm exec hardhat compile --config hardhat.config.ts
+9 verbose argv "exec" "--" "hardhat" "compile" "--config" "hardhat.config.ts"
+10 verbose logfile logs-max:10 dir:/Users/nathanpeterson/Desktop/Development/zksync-era/contracts/l2-contracts/~/.npm/_logs/2025-11-23T15_07_11_203Z-
+11 verbose logfile /Users/nathanpeterson/Desktop/Development/zksync-era/contracts/l2-contracts/~/.npm/_logs/2025-11-23T15_07_11_203Z-debug-0.log
+12 silly logfile done cleaning log files
+13 http fetch GET 200 https://registry.npmjs.org/npm 193ms
+14 verbose cwd /Users/nathanpeterson/Desktop/Development/zksync-era/contracts/l2-contracts
+15 verbose os Darwin 24.6.0
+16 verbose node v24.3.0
+17 verbose npm  v11.4.2
+18 notice
+18 notice New minor version of npm available! 11.4.2 -> 11.6.3
+18 notice Changelog: https://github.com/npm/cli/releases/tag/v11.6.3
+18 notice To update run: npm install -g npm@11.6.3
+18 notice  { force: true, Symbol(proc-log.meta): true }
+19 verbose exit 1
+20 verbose code 1

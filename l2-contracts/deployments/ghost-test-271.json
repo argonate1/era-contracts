@@ -1,0 +1,12 @@
+{
+  "network": "271",
+  "deployer": "0x721C8Ec0EC29BEfFF39415DF075BB06c753De498",
+  "timestamp": "2025-11-24T02:56:44.861Z",
+  "contracts": {
+    "nullifierRegistry": "0xEB47fdc8cAbF4c11B7084D5E17F4480EDc209692",
+    "commitmentTree": "0xD486a87506b6f9a2f0d9eDd60d5d6D67DA434816",
+    "verifier": "0x8B7ceEd3F3058182E483E389C983b12F5c775175",
+    "ghostToken": "0x66102b6DbeB3c91f03452bA87695DA5210bA4c4f"
+  },
+  "testMode": true
+}

@@ -1,0 +1,11 @@
+{
+  "network": "271",
+  "deployer": "0x721C8Ec0EC29BEfFF39415DF075BB06c753De498",
+  "timestamp": "2025-11-24T02:48:25.296Z",
+  "contracts": {
+    "poseidon": "0x34F6363a451118ba59fEF66ba0b89142a0CAB417",
+    "nullifierRegistry": "0xE485312215126613a5e8B8f1d8880919E6884029",
+    "verifier": "0xCdb0Dd10237D9a039bC716575f45c7B24C961A0f"
+  },
+  "note": "CommitmentTree and GhostERC20 pending"
+}

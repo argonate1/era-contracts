@@ -1,0 +1,8 @@
+{
+  "network": "271",
+  "deployer": "0x721C8Ec0EC29BEfFF39415DF075BB06c753De498",
+  "timestamp": "2025-11-24T02:40:29.377Z",
+  "contracts": {
+    "Contract_0": "0x0000000000000000000000000000000000008006"
+  }
+}

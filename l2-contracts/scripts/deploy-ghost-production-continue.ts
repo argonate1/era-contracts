@@ -178,7 +178,6 @@ async function main() {
     console.log(`VITE_COMMITMENT_TREE_ADDRESS=${deployedContracts.commitmentTree}`);
     console.log(`VITE_NULLIFIER_REGISTRY_ADDRESS=${deployedContracts.nullifierRegistry}`);
     console.log(`VITE_VERIFIER_ADDRESS=${deployedContracts.verifier}`);
-    console.log(`VITE_TEST_MODE=false`);
 
   } catch (error) {
     console.error("\n❌ Deployment failed:", error);
