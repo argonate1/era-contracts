@@ -1,0 +1,13 @@
+{
+  "network": "5448",
+  "deployer": "0x2AA016C6c0756A6c1d13c1183E9F552815E3a95c",
+  "timestamp": "2025-11-25T02:39:53.944Z",
+  "contracts": {
+    "commitmentTree": "0x5F3a4d9C2e2f98B5a05F8014e04192Fd1C39D6A1",
+    "nullifierRegistry": "0x86D815CEBda3Ee77C3325A9BDd96F171c27613BE",
+    "verifier": "0x238b0e95fD20A544D0f085b2f103528B74529Ec1",
+    "ghostToken": "0x456e224ADe45E4C4809F89D03C92Df65165f86CA"
+  },
+  "testMode": true,
+  "hashFunction": "Keccak256 (TEST ONLY)"
+}

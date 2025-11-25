@@ -15,9 +15,13 @@ pragma solidity 0.8.28;
 
 /// @title IGhostCommitmentTree
 /// @notice Interface for the commitment tree that stores ghost voucher commitments
-/// @dev Implements an incremental Merkle tree for O(log n) insertions and proofs
+/// @dev Merkle tree is computed OFF-CHAIN. Contract stores commitments and roots.
+///      - Commitments are stored in an append-only array (canonical source)
+///      - Roots are computed off-chain by relayer and submitted to contract
+///      - Proofs are verified in ZK circuits, not on-chain
 interface IGhostCommitmentTree {
     /// @notice Emitted when a new commitment is inserted
+    /// @dev Note: newRoot may be bytes32(0) when tree is computed off-chain
     event CommitmentInserted(bytes32 indexed commitment, uint256 indexed leafIndex, bytes32 newRoot);
 
     /// @notice Insert a commitment into the tree
@@ -43,12 +47,14 @@ interface IGhostCommitmentTree {
     /// @return The total number of commitments
     function getNextLeafIndex() external view returns (uint256);
 
-    /// @notice Verify a Merkle proof
-    /// @param leaf The leaf value
-    /// @param pathElements The sibling hashes along the path
-    /// @param pathIndices The path direction indicators (0 = left, 1 = right)
-    /// @param root The root to verify against
-    /// @return True if the proof is valid
+    /// @notice Verify a Merkle proof - NOT SUPPORTED IN OFF-CHAIN ARCHITECTURE
+    /// @dev Proof verification happens in ZK circuits, not on-chain.
+    ///      This function exists for interface compatibility but reverts.
+    /// @param leaf The leaf value (unused)
+    /// @param pathElements The sibling hashes along the path (unused)
+    /// @param pathIndices The path direction indicators (unused)
+    /// @param root The root to verify against (unused)
+    /// @return Always reverts - proofs are verified in ZK circuits
     function verifyProof(
         bytes32 leaf,
         bytes32[] calldata pathElements,

@@ -2,7 +2,6 @@
 pragma solidity 0.8.28;
 
 import {IGhostVerifier} from "./interfaces/IGhostContracts.sol";
-import {GhostHash} from "./libraries/GhostHash.sol";
 
 /// @title GhostVerifier
 /// @author Ghost Protocol Team

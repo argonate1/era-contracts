@@ -1,0 +1,11 @@
+{
+  "secret": "0x8444d9dbda7c118b2bd59179f1313fffe84ad214d413eefdc103e9a1ed152fa1",
+  "nullifier": "0x647c0c1b2638872499e241210311ee34ad6dafa8db6928e3d120124cd2158df7",
+  "amount": "10000000000000000000",
+  "commitment": "0x17d1a576392bc932c6d7f78098d21749ca14450f915c85668971da7a53548615",
+  "leafIndex": "unknown",
+  "tokenAddress": "0xB4D01F758b7725a7190F5db700Fc081c44Ec626a",
+  "treeRoot": "0x01c0e72bf4b4afde8e01aa9d41a4c2a78a39a75498174477d835bf522f929f43",
+  "chainId": 5448,
+  "timestamp": "2025-11-25T04:25:04.545Z"
+}

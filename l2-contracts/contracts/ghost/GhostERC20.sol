@@ -6,7 +6,6 @@ import {UpgradeableBeacon} from "@openzeppelin/contracts-v4/proxy/beacon/Upgrade
 import {ERC1967Upgrade} from "@openzeppelin/contracts-v4/proxy/ERC1967/ERC1967Upgrade.sol";
 
 import {IGhostERC20, IGhostCommitmentTree, IGhostNullifierRegistry, IGhostVerifier} from "./interfaces/IGhostContracts.sol";
-import {GhostHash} from "./libraries/GhostHash.sol";
 
 /// @title GhostERC20
 /// @author Ghost Protocol Team
@@ -22,7 +21,7 @@ import {GhostHash} from "./libraries/GhostHash.sol";
 ///      - The voucher (secret + nullifier) is the ONLY link, held off-chain by user
 ///
 ///      Gas costs (approximate):
-///      - ghost(): ~300K gas (includes Merkle tree insertion)
+///      - ghost(): ~50K gas (commitment storage + event)
 ///      - redeem(): ~350K gas (includes ZK verification + mint)
 ///      - redeemPartial(): ~400K gas (includes ZK verification + mint + new commitment)
 ///
@@ -32,7 +31,7 @@ import {GhostHash} from "./libraries/GhostHash.sol";
 ///      1. The ZK verifier correctly validates proofs (commitment membership + nullifier correctness)
 ///      2. The commitment tree is append-only and maintains valid Merkle roots
 ///      3. Nullifiers cannot be predicted without knowledge of the secret
-///      4. The hash function (Poseidon/keccak256) is collision-resistant
+///      4. The hash function (Poseidon, computed off-chain) is collision-resistant
 ///      5. Only the NativeTokenVault can mint/burn tokens via bridge operations
 ///      6. Users keep their vouchers (secret + nullifier) secure and off-chain
 ///
@@ -164,8 +163,9 @@ contract GhostERC20 is ERC20PermitUpgradeable, IGhostERC20, ERC1967Upgrade {
     /// @notice Ghost tokens - burn and create a commitment for later redemption
     /// @dev The commitment should be: hash(secret || nullifier || amount || token)
     ///      The user must store the secret and nullifier off-chain in their voucher
+    ///      Commitment is computed OFF-CHAIN using Poseidon (circomlibjs)
     ///
-    ///      Gas cost: ~300,000 gas
+    ///      Gas cost: ~50,000 gas (no on-chain hashing)
     ///
     ///      Flow:
     ///      1. Burn tokens from sender (reduces total supply temporarily)
@@ -373,18 +373,24 @@ contract GhostERC20 is ERC20PermitUpgradeable, IGhostERC20, ERC1967Upgrade {
         outstanding = totalGhosted - totalRedeemed;
     }
 
-    /// @notice Helper to compute a commitment (for client-side use)
-    /// @dev In production, this should be computed client-side to keep secret private
-    function computeCommitment(
-        bytes32 secret,
-        bytes32 nullifier,
-        uint256 amount
-    ) external view returns (bytes32) {
-        return GhostHash.computeCommitment(secret, nullifier, amount, address(this));
-    }
-
     /// @notice Get the L1 origin token address
     function l1Address() external view returns (address) {
         return originToken;
+    }
+
+    // =========================================================================
+    // Contract Type Discriminator (for deployment verification)
+    // =========================================================================
+
+    /// @notice Indicates this is the production contract (not test)
+    /// @return false for production contracts, true for test contracts
+    function isTestContract() external pure returns (bool) {
+        return false;
+    }
+
+    /// @notice Returns the hash function used by this contract
+    /// @return "poseidon-offchain" indicating commitments are hashed off-chain with Poseidon
+    function hashFunction() external pure returns (string memory) {
+        return "poseidon-offchain";
     }
 }

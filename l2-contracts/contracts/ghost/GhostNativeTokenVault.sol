@@ -18,11 +18,13 @@ import {GhostVerifier} from "./GhostVerifier.sol";
 ///      automatically ghost-capable. When USDC bridges from L1, users receive gUSDC which
 ///      has built-in ghost/redeem functionality.
 ///
-///      Architecture:
+///      Architecture (Off-Chain Tree):
 ///      - Receives bridgeMint calls from L2AssetRouter
 ///      - Deploys GhostERC20 tokens for each new asset
 ///      - All ghost tokens share the same CommitmentTree and NullifierRegistry
 ///      - This creates a larger anonymity set across all tokens
+///      - Merkle tree computation happens OFF-CHAIN
+///      - Authorized relayer submits roots to CommitmentTree
 contract GhostNativeTokenVault is IGhostNativeTokenVault {
     /// @notice The L2 Asset Router that calls bridgeMint/bridgeBurn
     address public immutable L2_ASSET_ROUTER;
@@ -83,28 +85,37 @@ contract GhostNativeTokenVault is IGhostNativeTokenVault {
         _;
     }
 
+    // Precomputed initial root for empty tree (Z20 - must match SDK)
+    bytes32 constant INITIAL_ROOT = bytes32(0x0b4a6c626bd085f652fb17cad5b70c9db903266b5a3f456ea6373a3cf97f3453);
+
     /// @notice Constructor
     /// @param _l2AssetRouter The L2 Asset Router address
     /// @param _l1ChainId The L1 chain ID
     /// @param _ghostTokenImplementation The GhostERC20 implementation address
+    /// @param _rootSubmitter The authorized root submitter (relayer) address
     /// @param _testMode Whether to run verifier in test mode (accepts all proofs)
     constructor(
         address _l2AssetRouter,
         uint256 _l1ChainId,
         address _ghostTokenImplementation,
+        address _rootSubmitter,
         bool _testMode
     ) {
         if (_l2AssetRouter == address(0)) revert ZeroAddress();
         if (_ghostTokenImplementation == address(0)) revert ZeroAddress();
+        if (_rootSubmitter == address(0)) revert ZeroAddress();
 
         L2_ASSET_ROUTER = _l2AssetRouter;
         L1_CHAIN_ID = _l1ChainId;
         owner = msg.sender;
 
-        // Deploy shared infrastructure
-        commitmentTree = new CommitmentTree();
+        // Deploy shared infrastructure with initial root (off-chain tree architecture)
+        commitmentTree = new CommitmentTree(INITIAL_ROOT);
         nullifierRegistry = new NullifierRegistry();
         verifier = new GhostVerifier(_testMode);
+
+        // Set the authorized root submitter (relayer)
+        commitmentTree.setRootSubmitter(_rootSubmitter);
 
         // Create beacon for ghost token proxies
         ghostTokenBeacon = new UpgradeableBeacon(_ghostTokenImplementation);

@@ -1,0 +1,38 @@
+{
+  "network": "umbraline",
+  "chainId": 5447,
+  "timestamp": "2025-11-25T00:00:00Z",
+  "deploymentType": "off-chain-merkle",
+  "deployer": "0x2AA016C6c0756A6c1d13c1183E9F552815E3a95c",
+  "contracts": {
+    "CommitmentTree": "0x456e224ADe45E4C4809F89D03C92Df65165f86CA",
+    "NullifierRegistry": "0xbFaF8231ED01e2631AfFE7F5e3c6d85006B8b33F",
+    "GhostVerifier": "0xB4D01F758b7725a7190F5db700Fc081c44Ec626a",
+    "GhostERC20_Implementation": "0x40BB523D068279b998205A69a184f1146376b89f",
+    "GhostERC20_Proxy": "0xECDB8b4879C34eab01Eb90a752237EC5D5136f67"
+  },
+  "tokenConfig": {
+    "name": "Test Token",
+    "symbol": "TEST",
+    "decimals": 18
+  },
+  "authorization": {
+    "rootSubmitter": "0x2AA016C6c0756A6c1d13c1183E9F552815E3a95c",
+    "ghostTokenAuthorizedInserter": true,
+    "ghostTokenAuthorizedMarker": true
+  },
+  "merkleTree": {
+    "architecture": "off-chain",
+    "depth": 20,
+    "maxCommitments": 1048576,
+    "initialRoot": "0x0b4a6c626bd085f652fb17cad5b70c9db903266b5a3f456ea6373a3cf97f3453",
+    "hashFunction": "poseidon"
+  },
+  "verified": {
+    "isTestContract": true,
+    "initialRootVerified": true,
+    "authorizationsCorrect": true,
+    "contractsLinkedCorrectly": true
+  },
+  "notes": "Fresh deployment with off-chain Merkle tree architecture. No Poseidon or GhostHash contracts deployed on-chain."
+}

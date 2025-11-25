@@ -1,7 +1,12 @@
 /**
- * Continue Ghost Protocol production deployment from CommitmentTree
+ * Deploy Ghost Protocol TEST contracts (Keccak-based) to zkSync testnet
  *
- * Run after deploy-ghost-production.ts fails at CommitmentTree
+ * This script deploys test versions of Ghost Protocol contracts that use
+ * keccak256 instead of Poseidon for hashing. This is for testing the
+ * protocol flow without requiring zkSync-compatible Poseidon assembly.
+ *
+ * WARNING: These contracts DO NOT match the ZK circuits and should only
+ * be used for integration testing.
  */
 
 import { Wallet, Provider, ContractFactory, Contract } from "zksync-ethers";
@@ -12,21 +17,35 @@ import * as path from "path";
 const PRIVATE_KEY = process.env.WALLET_PRIVATE_KEY || "0xb9740374221c300084dbf462fe6a6e355d0b51d23738a65ca8c1fdc7ff51785c";
 const RPC_URL = process.env.ZKSYNC_RPC_URL || "http://127.0.0.1:3150";
 
-// Already deployed contracts (from previous run on chain 5448)
+// Already deployed contracts (from previous production run on chain 5448)
 const REDEEM_VERIFIER_ADDRESS = "0x75FC40a8569a11070f831CFaFe2e66Ff4120767d";
 const PARTIAL_REDEEM_VERIFIER_ADDRESS = "0xc925014acF9a9A80aD7740D3dE5B88cCaBb86981";
 const VERIFIER_ADDRESS = "0x238b0e95fD20A544D0f085b2f103528B74529Ec1";
 const NULLIFIER_REGISTRY_ADDRESS = "0x86D815CEBda3Ee77C3325A9BDd96F171c27613BE";
 
-async function loadArtifact(contractName: string): Promise<{abi: any, bytecode: string}> {
-  const artifactPath = path.join(
-    __dirname,
-    `../zkout/${contractName}.sol/${contractName}.json`
-  );
+async function loadArtifact(contractName: string, subdir?: string): Promise<{abi: any, bytecode: string}> {
+  // Try various path patterns
+  const basePath = path.join(__dirname, '../zkout');
+  const paths = [
+    // zkout/test/ContractName.sol/ContractName.json
+    path.join(basePath, subdir || '', `${contractName}.sol`, `${contractName}.json`),
+    // zkout/ContractName.sol/ContractName.json
+    path.join(basePath, `${contractName}.sol`, `${contractName}.json`),
+  ];
 
-  if (!fs.existsSync(artifactPath)) {
-    throw new Error(`Artifact not found: ${artifactPath}. Run 'forge build --zksync' first.`);
+  let artifactPath: string | null = null;
+  for (const p of paths) {
+    console.log(`  Checking: ${p}`);
+    if (fs.existsSync(p)) {
+      artifactPath = p;
+      break;
+    }
   }
+
+  if (!artifactPath) {
+    throw new Error(`Artifact not found for ${contractName}. Tried: ${paths.join(', ')}. Run 'forge build --zksync' first.`);
+  }
+  console.log(`  Found artifact: ${artifactPath}`);
 
   const artifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8'));
   let bytecode = artifact.bytecode.object;
@@ -51,11 +70,12 @@ async function deployContract(
   wallet: Wallet,
   name: string,
   args: any[] = [],
-  gasLimit?: bigint
+  gasLimit?: bigint,
+  subdir?: string
 ): Promise<string> {
   console.log(`\nDeploying ${name}...`);
 
-  const artifact = await loadArtifact(name);
+  const artifact = await loadArtifact(name, subdir);
 
   const factory = new ContractFactory(
     artifact.abi,
@@ -66,7 +86,7 @@ async function deployContract(
 
   const deployTx = await factory.getDeployTransaction(...args);
 
-  // Add manual gas limit for contracts that fail gas estimation
+  // Add manual gas limit for contracts that might need it
   if (gasLimit) {
     (deployTx as any).gasLimit = gasLimit;
     console.log(`  Using manual gas limit: ${gasLimit}`);
@@ -79,13 +99,22 @@ async function deployContract(
   const address = receipt.contractAddress!;
   console.log(`  Deployed to: ${address}`);
 
+  // Verify deployment
+  const code = await wallet.provider!.getCode(address);
+  console.log(`  Contract code length: ${code.length}`);
+  if (code.length <= 2) {
+    throw new Error(`Contract deployment failed - no code at ${address}`);
+  }
+
   return address;
 }
 
 async function main() {
   console.log("=".repeat(60));
-  console.log("Ghost Protocol - Continue Deployment");
+  console.log("Ghost Protocol - TESTNET Deployment (Keccak-based)");
   console.log("=".repeat(60));
+  console.log("\n⚠️  WARNING: This deploys TEST contracts that use keccak256");
+  console.log("   instead of Poseidon. NOT FOR PRODUCTION USE.\n");
 
   const provider = new Provider(RPC_URL);
   const wallet = new Wallet(PRIVATE_KEY, provider);
@@ -93,7 +122,7 @@ async function main() {
   console.log(`Deployer: ${deployer}`);
 
   const balance = await provider.getBalance(deployer);
-  console.log(`Balance: ${ethers.utils.formatEther(balance)} ETH`);
+  console.log(`Balance: ${ethers.utils.formatEther(balance)} GHOST`);
 
   const network = await provider.getNetwork();
   console.log(`Chain ID: ${network.chainId}`);
@@ -103,27 +132,37 @@ async function main() {
   console.log(`  NullifierRegistry: ${NULLIFIER_REGISTRY_ADDRESS}`);
 
   const deployedContracts: Record<string, string> = {
+    redeemVerifier: REDEEM_VERIFIER_ADDRESS,
+    partialRedeemVerifier: PARTIAL_REDEEM_VERIFIER_ADDRESS,
     verifier: VERIFIER_ADDRESS,
     nullifierRegistry: NULLIFIER_REGISTRY_ADDRESS,
   };
 
   try {
-    // Step 5: Deploy CommitmentTree with high gas limit (Poseidon is gas-heavy)
+    // Deploy TestCommitmentTree (Keccak-based, much cheaper)
     console.log("\n" + "-".repeat(40));
-    console.log("Step 5/6: Deploy CommitmentTree (Poseidon)");
+    console.log("Deploying TestCommitmentTree (Keccak-based)");
     console.log("-".repeat(40));
-    // CommitmentTree uses Poseidon and initializes 20 levels of zeros in constructor
-    deployedContracts.commitmentTree = await deployContract(wallet, "CommitmentTree", [], BigInt(50000000));
+    deployedContracts.commitmentTree = await deployContract(
+      wallet,
+      "TestCommitmentTree",
+      [],
+      BigInt(15000000),  // 15M gas should be plenty for keccak
+      "test"
+    );
 
-    // Step 6: Deploy GhostERC20 (upgradeable pattern - deploy then initialize)
+    // Deploy GhostERC20 (upgradeable pattern - deploy then initialize)
     console.log("\n" + "-".repeat(40));
-    console.log("Step 6/6: Deploy GhostERC20");
+    console.log("Deploying GhostERC20");
     console.log("-".repeat(40));
+    deployedContracts.ghostToken = await deployContract(
+      wallet,
+      "GhostERC20",
+      [],
+      BigInt(50000000)  // 50M gas for larger contract
+    );
 
-    // Deploy with no constructor args (upgradeable contract)
-    deployedContracts.ghostToken = await deployContract(wallet, "GhostERC20", [], BigInt(30000000));
-
-    // Initialize the contract
+    // Initialize the GhostERC20 contract
     console.log("  Initializing GhostERC20...");
     const ghostTokenArtifact = await loadArtifact("GhostERC20");
     const ghostToken = new Contract(
@@ -156,7 +195,7 @@ async function main() {
     console.log("Configuring authorizations...");
     console.log("-".repeat(40));
 
-    const commitmentTreeArtifact = await loadArtifact("CommitmentTree");
+    const commitmentTreeArtifact = await loadArtifact("TestCommitmentTree", "test");
     const commitmentTree = new Contract(
       deployedContracts.commitmentTree,
       commitmentTreeArtifact.abi,
@@ -184,11 +223,12 @@ async function main() {
       deployer: deployer,
       timestamp: new Date().toISOString(),
       contracts: deployedContracts,
-      testMode: false,
-      hashFunction: "Poseidon"
+      testMode: true,
+      hashFunction: "Keccak256 (TEST ONLY)",
+      warning: "These contracts use keccak256 instead of Poseidon and DO NOT match ZK circuits"
     };
 
-    const outputPath = path.join(__dirname, `../deployments/ghost-production-${network.chainId}.json`);
+    const outputPath = path.join(__dirname, `../deployments/ghost-testnet-${network.chainId}.json`);
     const outputDir = path.dirname(outputPath);
     if (!fs.existsSync(outputDir)) {
       fs.mkdirSync(outputDir, { recursive: true });
@@ -196,13 +236,16 @@ async function main() {
     fs.writeFileSync(outputPath, JSON.stringify(deploymentInfo, null, 2));
 
     console.log("\n" + "=".repeat(60));
-    console.log("DEPLOYMENT COMPLETE (Production - Poseidon)");
+    console.log("DEPLOYMENT COMPLETE (Testnet - Keccak)");
     console.log("=".repeat(60));
-    console.log("\n📋 UI Environment Variables:");
+    console.log("\n⚠️  REMINDER: These are TEST contracts using keccak256!");
+    console.log("   They will NOT work with ZK proofs.\n");
+    console.log("📋 UI Environment Variables:");
     console.log(`VITE_GHOST_TOKEN_ADDRESS=${deployedContracts.ghostToken}`);
     console.log(`VITE_COMMITMENT_TREE_ADDRESS=${deployedContracts.commitmentTree}`);
     console.log(`VITE_NULLIFIER_REGISTRY_ADDRESS=${deployedContracts.nullifierRegistry}`);
     console.log(`VITE_VERIFIER_ADDRESS=${deployedContracts.verifier}`);
+    console.log(`\nDeployment saved to: ${outputPath}`);
 
   } catch (error) {
     console.error("\n❌ Deployment failed:", error);

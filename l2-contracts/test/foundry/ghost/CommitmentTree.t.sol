@@ -3,18 +3,26 @@ pragma solidity 0.8.28;
 
 import {Test, console2} from "forge-std/Test.sol";
 import {CommitmentTree} from "../../../contracts/ghost/CommitmentTree.sol";
-import {GhostHash} from "../../../contracts/ghost/libraries/GhostHash.sol";
 
+/// @title CommitmentTreeTest
+/// @notice Tests for the off-chain Merkle tree CommitmentTree contract
+/// @dev Note: This contract now stores commitments and roots, but tree is computed off-chain
 contract CommitmentTreeTest is Test {
     CommitmentTree public tree;
 
     address public alice = address(0x1);
     address public bob = address(0x2);
+    address public relayer = address(0x3);
+
+    // Precomputed initial root for empty tree (Z20 - must match SDK)
+    bytes32 constant INITIAL_ROOT = bytes32(0x0b4a6c626bd085f652fb17cad5b70c9db903266b5a3f456ea6373a3cf97f3453);
 
     event CommitmentInserted(bytes32 indexed commitment, uint256 indexed leafIndex, bytes32 newRoot);
+    event RootUpdated(bytes32 indexed root, uint256 leafCount);
 
     function setUp() public {
-        tree = new CommitmentTree();
+        tree = new CommitmentTree(INITIAL_ROOT);
+        tree.setRootSubmitter(relayer);
     }
 
     // ============ Basic Insertion Tests ============
@@ -22,19 +30,18 @@ contract CommitmentTreeTest is Test {
     function test_Insert_FirstCommitment() public {
         bytes32 commitment = keccak256("test_commitment_1");
 
-        // Note: We use (true, true, false, false) because:
-        // - First indexed param (commitment): must match
-        // - Second indexed param (leafIndex): must match
-        // - Non-indexed data (newRoot): will change after insertion, so don't check
-        vm.expectEmit(true, true, false, false);
-        emit CommitmentInserted(commitment, 0, bytes32(0)); // Root doesn't need to match
+        // Expect event with newRoot = 0 (root computed off-chain)
+        vm.expectEmit(true, true, false, true);
+        emit CommitmentInserted(commitment, 0, bytes32(0));
 
         uint256 leafIndex = tree.insert(commitment);
 
         assertEq(leafIndex, 0, "First leaf should be index 0");
         assertEq(tree.getNextLeafIndex(), 1, "Next leaf index should be 1");
-        // Verify root actually changed (it's not the initial empty root)
-        assertTrue(tree.getRoot() != bytes32(0), "Root should be non-zero after insertion");
+        assertEq(tree.getCommitmentCount(), 1, "Commitment count should be 1");
+        assertEq(tree.getCommitment(0), commitment, "Commitment should be stored");
+        // Root should still be initial (relayer hasn't updated yet)
+        assertEq(tree.getRoot(), INITIAL_ROOT, "Root unchanged until relayer submits");
     }
 
     function test_Insert_MultipleCommitments() public {
@@ -50,20 +57,80 @@ contract CommitmentTreeTest is Test {
         assertEq(idx2, 1);
         assertEq(idx3, 2);
         assertEq(tree.getNextLeafIndex(), 3);
+        assertEq(tree.getCommitmentCount(), 3);
     }
 
-    function test_Insert_RootChangesWithEachInsertion() public {
-        bytes32 root1 = tree.getRoot();
+    // ============ Root Submission Tests ============
 
-        tree.insert(keccak256("commitment_1"));
-        bytes32 root2 = tree.getRoot();
+    function test_SubmitRoot_ByRelayer() public {
+        bytes32 commitment = keccak256("commitment_1");
+        tree.insert(commitment);
 
+        bytes32 newRoot = keccak256("computed_root_1");
+
+        vm.prank(relayer);
+        vm.expectEmit(true, false, false, true);
+        emit RootUpdated(newRoot, 1);
+        tree.submitRoot(newRoot, 1);
+
+        assertEq(tree.getRoot(), newRoot, "Root should be updated");
+        assertTrue(tree.isKnownRoot(newRoot), "New root should be known");
+        assertTrue(tree.isKnownRoot(INITIAL_ROOT), "Initial root should still be known");
+    }
+
+    function test_SubmitRoot_InvalidLeafCount() public {
+        tree.insert(keccak256("commitment"));
+
+        bytes32 newRoot = keccak256("root");
+
+        vm.prank(relayer);
+        vm.expectRevert(CommitmentTree.InvalidLeafCount.selector);
+        tree.submitRoot(newRoot, 0); // Wrong count (should be 1)
+    }
+
+    function test_SubmitRoot_DuplicateRoot() public {
+        tree.insert(keccak256("commitment"));
+
+        bytes32 newRoot = keccak256("root_1");
+
+        vm.prank(relayer);
+        tree.submitRoot(newRoot, 1);
+
+        // Try to submit same root again
         tree.insert(keccak256("commitment_2"));
-        bytes32 root3 = tree.getRoot();
+        vm.prank(relayer);
+        vm.expectRevert(CommitmentTree.RootAlreadySubmitted.selector);
+        tree.submitRoot(newRoot, 2); // Same root, different count - should fail
+    }
 
-        assertTrue(root1 != root2, "Root should change after first insertion");
-        assertTrue(root2 != root3, "Root should change after second insertion");
-        assertTrue(root1 != root3, "All roots should be different");
+    function test_SubmitRoot_OnlyRelayer() public {
+        tree.insert(keccak256("commitment"));
+        bytes32 newRoot = keccak256("root");
+
+        vm.prank(alice);
+        vm.expectRevert(CommitmentTree.Unauthorized.selector);
+        tree.submitRoot(newRoot, 1);
+    }
+
+    // ============ InsertAndUpdateRoot Tests ============
+
+    function test_InsertAndUpdateRoot() public {
+        bytes32 commitment = keccak256("commitment_1");
+        bytes32 newRoot = keccak256("root_after_insert");
+
+        vm.prank(relayer);
+        uint256 idx = tree.insertAndUpdateRoot(commitment, newRoot);
+
+        assertEq(idx, 0, "Should return leaf index 0");
+        assertEq(tree.getCommitment(0), commitment, "Commitment stored");
+        assertEq(tree.getRoot(), newRoot, "Root updated atomically");
+        assertTrue(tree.isKnownRoot(newRoot), "New root is known");
+    }
+
+    function test_InsertAndUpdateRoot_OnlyRelayer() public {
+        vm.prank(alice);
+        vm.expectRevert(CommitmentTree.Unauthorized.selector);
+        tree.insertAndUpdateRoot(keccak256("c"), keccak256("r"));
     }
 
     // ============ Authorization Tests ============
@@ -103,24 +170,29 @@ contract CommitmentTreeTest is Test {
         tree.authorizeInserter(bob);
     }
 
-    // ============ Root History Tests ============
-
-    function test_IsKnownRoot_CurrentRoot() public {
-        tree.insert(keccak256("commitment"));
-        bytes32 currentRoot = tree.getRoot();
-
-        assertTrue(tree.isKnownRoot(currentRoot), "Current root should be known");
+    function test_SetRootSubmitter_OnlyOwner() public {
+        vm.prank(alice);
+        vm.expectRevert(CommitmentTree.Unauthorized.selector);
+        tree.setRootSubmitter(bob);
     }
 
-    function test_IsKnownRoot_HistoricalRoot() public {
-        tree.insert(keccak256("commitment_1"));
-        bytes32 root1 = tree.getRoot();
+    function test_TransferOwnership() public {
+        tree.transferOwnership(alice);
+        assertEq(tree.owner(), alice, "Ownership transferred");
 
-        tree.insert(keccak256("commitment_2"));
-        bytes32 root2 = tree.getRoot();
+        // Old owner can't do owner actions
+        vm.expectRevert(CommitmentTree.Unauthorized.selector);
+        tree.authorizeInserter(bob);
 
-        assertTrue(tree.isKnownRoot(root1), "Historical root should be known");
-        assertTrue(tree.isKnownRoot(root2), "Current root should be known");
+        // New owner can
+        vm.prank(alice);
+        tree.authorizeInserter(bob);
+    }
+
+    // ============ Root History Tests ============
+
+    function test_IsKnownRoot_InitialRoot() public {
+        assertTrue(tree.isKnownRoot(INITIAL_ROOT), "Initial root should be known");
     }
 
     function test_IsKnownRoot_ZeroIsNotKnown() public {
@@ -132,54 +204,62 @@ contract CommitmentTreeTest is Test {
         assertFalse(tree.isKnownRoot(randomRoot), "Random root should not be known");
     }
 
+    function test_CheckRoot_AliasForIsKnownRoot() public {
+        assertTrue(tree.checkRoot(INITIAL_ROOT), "checkRoot should work like isKnownRoot");
+        assertFalse(tree.checkRoot(bytes32(0)), "checkRoot returns false for zero");
+    }
+
+    function test_RootHistory_Persistence() public {
+        // Insert commitments and roots
+        tree.insert(keccak256("c1"));
+        bytes32 root1 = keccak256("r1");
+        vm.prank(relayer);
+        tree.submitRoot(root1, 1);
+
+        tree.insert(keccak256("c2"));
+        bytes32 root2 = keccak256("r2");
+        vm.prank(relayer);
+        tree.submitRoot(root2, 2);
+
+        // All roots should be known
+        assertTrue(tree.isKnownRoot(INITIAL_ROOT), "Initial root still known");
+        assertTrue(tree.isKnownRoot(root1), "Root 1 still known");
+        assertTrue(tree.isKnownRoot(root2), "Root 2 still known");
+    }
+
     // ============ Proof Verification Tests ============
 
-    function test_VerifyProof_ValidProof() public {
-        // Insert a commitment
-        bytes32 commitment = keccak256("test_commitment");
-        tree.insert(commitment);
-        bytes32 root = tree.getRoot();
-
-        // Build a valid proof (for leaf index 0)
+    function test_VerifyProof_Reverts() public {
+        // verifyProof should always revert - proofs are verified in ZK circuits
         bytes32[] memory pathElements = new bytes32[](20);
         uint256[] memory pathIndices = new uint256[](20);
 
-        // For the first leaf, all siblings are zero values
-        for (uint256 i = 0; i < 20; i++) {
-            pathElements[i] = tree.getZeroValue(i);
-            pathIndices[i] = 0; // Left child at every level
-        }
-
-        bool isValid = tree.verifyProof(commitment, pathElements, pathIndices, root);
-        assertTrue(isValid, "Valid proof should verify");
+        vm.expectRevert(CommitmentTree.ProofVerificationNotSupported.selector);
+        tree.verifyProof(keccak256("leaf"), pathElements, pathIndices, INITIAL_ROOT);
     }
 
-    function test_VerifyProof_InvalidProofLength() public {
-        bytes32 commitment = keccak256("test");
-        bytes32 root = tree.getRoot();
+    // ============ GetCommitments Range Query Test ============
 
-        bytes32[] memory shortPath = new bytes32[](10);
-        uint256[] memory shortIndices = new uint256[](10);
-
-        vm.expectRevert(CommitmentTree.InvalidProofLength.selector);
-        tree.verifyProof(commitment, shortPath, shortIndices, root);
-    }
-
-    function test_VerifyProof_WrongCommitment() public {
-        bytes32 commitment = keccak256("real_commitment");
-        tree.insert(commitment);
-        bytes32 root = tree.getRoot();
-
-        bytes32[] memory pathElements = new bytes32[](20);
-        uint256[] memory pathIndices = new uint256[](20);
-        for (uint256 i = 0; i < 20; i++) {
-            pathElements[i] = tree.getZeroValue(i);
-            pathIndices[i] = 0;
+    function test_GetCommitments_Range() public {
+        // Insert 5 commitments
+        for (uint i = 0; i < 5; i++) {
+            tree.insert(keccak256(abi.encodePacked("commitment_", i)));
         }
 
-        bytes32 fakeCommitment = keccak256("fake_commitment");
-        bool isValid = tree.verifyProof(fakeCommitment, pathElements, pathIndices, root);
-        assertFalse(isValid, "Proof with wrong commitment should fail");
+        // Get commitments 1-3
+        bytes32[] memory result = tree.getCommitments(1, 2);
+        assertEq(result.length, 2, "Should return 2 commitments");
+        assertEq(result[0], keccak256(abi.encodePacked("commitment_", uint256(1))));
+        assertEq(result[1], keccak256(abi.encodePacked("commitment_", uint256(2))));
+    }
+
+    function test_GetCommitments_BeyondEnd() public {
+        tree.insert(keccak256("c1"));
+        tree.insert(keccak256("c2"));
+
+        // Request more than available
+        bytes32[] memory result = tree.getCommitments(1, 100);
+        assertEq(result.length, 1, "Should cap at available commitments");
     }
 
     // ============ Tree Capacity Tests ============
@@ -190,6 +270,16 @@ contract CommitmentTreeTest is Test {
 
     function test_MaxLeaves() public {
         assertEq(tree.MAX_LEAVES(), 2**20, "Max leaves should be 2^20");
+    }
+
+    // ============ Contract Type Tests ============
+
+    function test_IsNotTestContract() public {
+        assertFalse(tree.isTestContract(), "Should not be test contract");
+    }
+
+    function test_HashFunction() public {
+        assertEq(tree.hashFunction(), "poseidon-offchain", "Hash function indicator");
     }
 
     // ============ Fuzz Tests ============
@@ -204,19 +294,22 @@ contract CommitmentTreeTest is Test {
         }
 
         assertEq(tree.getNextLeafIndex(), count);
+        assertEq(tree.getCommitmentCount(), count);
     }
 
-    function testFuzz_Insert_UniqueRoots(bytes32 commitment1, bytes32 commitment2) public {
-        vm.assume(commitment1 != commitment2);
+    function testFuzz_SubmitRoot_AnyValidRoot(bytes32 root1, bytes32 root2) public {
+        vm.assume(root1 != bytes32(0) && root2 != bytes32(0));
+        vm.assume(root1 != root2);
+        vm.assume(root1 != INITIAL_ROOT && root2 != INITIAL_ROOT);
 
-        tree.insert(commitment1);
-        bytes32 root1 = tree.getRoot();
+        tree.insert(keccak256("c1"));
+        vm.prank(relayer);
+        tree.submitRoot(root1, 1);
+        assertTrue(tree.isKnownRoot(root1));
 
-        // Create new tree for comparison
-        CommitmentTree tree2 = new CommitmentTree();
-        tree2.insert(commitment2);
-        bytes32 root2 = tree2.getRoot();
-
-        assertTrue(root1 != root2, "Different commitments should produce different roots");
+        tree.insert(keccak256("c2"));
+        vm.prank(relayer);
+        tree.submitRoot(root2, 2);
+        assertTrue(tree.isKnownRoot(root2));
     }
 }

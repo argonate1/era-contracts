@@ -7,11 +7,10 @@ import {GhostERC20Harness} from "../helpers/GhostERC20Harness.sol";
 import {CommitmentTree} from "../../../../contracts/ghost/CommitmentTree.sol";
 import {NullifierRegistry} from "../../../../contracts/ghost/NullifierRegistry.sol";
 import {GhostVerifier} from "../../../../contracts/ghost/GhostVerifier.sol";
-import {GhostHash} from "../../../../contracts/ghost/libraries/GhostHash.sol";
 
 /**
  * @title GhostInvariants
- * @notice Invariant tests for Ghost Protocol
+ * @notice Invariant tests for Ghost Protocol (off-chain tree architecture)
  * @dev These tests verify critical protocol invariants that must ALWAYS hold:
  *
  *      SUPPLY INVARIANTS:
@@ -23,15 +22,18 @@ import {GhostHash} from "../../../../contracts/ghost/libraries/GhostHash.sol";
  *      4. Each nullifier can only be spent once (double-spend prevention)
  *      5. Zero nullifier can never be marked spent
  *
- *      MERKLE TREE INVARIANTS:
+ *      COMMITMENT TREE INVARIANTS:
  *      6. nextLeafIndex monotonically increases
  *      7. nextLeafIndex never exceeds MAX_LEAVES
  *      8. Historical roots remain valid forever
- *      9. Current root equals roots[currentRootIndex]
+ *      9. Submitted roots are tracked in history
  *
  *      AUTHORIZATION INVARIANTS:
  *      10. Only authorized inserters can add commitments
  *      11. Only authorized markers can spend nullifiers
+ *
+ *      Note: With off-chain tree architecture, Merkle tree computation happens
+ *      off-chain. Roots are submitted by an authorized relayer.
  *
  * @custom:security These invariants are critical for protocol security.
  *                  If any invariant fails, there is a potential vulnerability.
@@ -47,9 +49,12 @@ contract GhostInvariantsTest is StdInvariant, Test {
     bytes32 public constant TEST_ASSET_ID = keccak256("TEST_ASSET");
     address public constant ORIGIN_TOKEN = address(0x1234);
 
+    // Precomputed initial root for empty tree (Z20 - must match SDK)
+    bytes32 constant INITIAL_ROOT = bytes32(0x0b4a6c626bd085f652fb17cad5b70c9db903266b5a3f456ea6373a3cf97f3453);
+
     function setUp() public {
-        // Deploy infrastructure
-        commitmentTree = new CommitmentTree();
+        // Deploy infrastructure with initial root
+        commitmentTree = new CommitmentTree(INITIAL_ROOT);
         nullifierRegistry = new NullifierRegistry();
         verifier = new GhostVerifier(true); // Test mode
 
@@ -72,6 +77,9 @@ contract GhostInvariantsTest is StdInvariant, Test {
 
         // Deploy handler for invariant testing
         handler = new GhostHandler(ghostToken, commitmentTree, nullifierRegistry);
+
+        // Set handler as root submitter for test
+        commitmentTree.setRootSubmitter(address(handler));
 
         // Target the handler for invariant testing
         targetContract(address(handler));
@@ -137,7 +145,7 @@ contract GhostInvariantsTest is StdInvariant, Test {
         );
     }
 
-    // ============ MERKLE TREE INVARIANTS ============
+    // ============ COMMITMENT TREE INVARIANTS ============
 
     /**
      * @notice Invariant: nextLeafIndex monotonically increases
@@ -221,9 +229,12 @@ contract GhostInvariantsTest is StdInvariant, Test {
 
 /**
  * @title GhostHandler
- * @notice Handler contract for Ghost Protocol invariant testing
+ * @notice Handler contract for Ghost Protocol invariant testing (off-chain tree architecture)
  * @dev This contract provides bounded actions for the fuzzer to call.
  *      It tracks state changes to verify invariants.
+ *
+ *      Note: With off-chain tree architecture, this handler also acts as the
+ *      root submitter, simulating the relayer role.
  */
 contract GhostHandler is Test {
     GhostERC20Harness public ghostToken;
@@ -238,6 +249,9 @@ contract GhostHandler is Test {
     // Call counters
     uint256 public ghostCallCount;
     uint256 public redeemCallCount;
+
+    // Root counter for unique test roots
+    uint256 private rootCounter;
 
     // Test actors
     address[] public actors;
@@ -254,6 +268,9 @@ contract GhostHandler is Test {
     }
     Voucher[] public vouchers;
 
+    // Precomputed initial root for empty tree (Z20 - must match SDK)
+    bytes32 constant INITIAL_ROOT = bytes32(0x0b4a6c626bd085f652fb17cad5b70c9db903266b5a3f456ea6373a3cf97f3453);
+
     constructor(
         GhostERC20Harness _ghostToken,
         CommitmentTree _commitmentTree,
@@ -269,7 +286,51 @@ contract GhostHandler is Test {
         }
 
         // Store initial root
-        historicalRoots.push(commitmentTree.getRoot());
+        historicalRoots.push(INITIAL_ROOT);
+    }
+
+    // ============ Helper Functions ============
+
+    /// @notice Compute a test commitment using keccak256 (for testing only)
+    /// @dev In production, commitments are computed off-chain using Poseidon
+    function _computeTestCommitment(
+        bytes32 secret,
+        bytes32 nullifier,
+        uint256 amount,
+        address token
+    ) internal pure returns (bytes32) {
+        return keccak256(abi.encodePacked(secret, nullifier, amount, token));
+    }
+
+    /// @notice Generate a unique test root
+    function _generateUniqueRoot() internal returns (bytes32) {
+        rootCounter++;
+        return keccak256(abi.encodePacked("test_root_", rootCounter, block.timestamp));
+    }
+
+    /// @notice Submit a root for the current commitment count (simulates relayer)
+    function _submitCurrentRoot() internal returns (bytes32 newRoot) {
+        newRoot = _generateUniqueRoot();
+        uint256 leafCount = commitmentTree.getCommitmentCount();
+        // Handler is set as root submitter in test setup
+        commitmentTree.submitRoot(newRoot, leafCount);
+        historicalRoots.push(newRoot);
+    }
+
+    /// @notice Build a dummy merkle proof for test mode verifier
+    function _buildDummyProof() internal pure returns (
+        bytes32[] memory merkleProof,
+        uint256[] memory pathIndices,
+        bytes memory zkProof
+    ) {
+        merkleProof = new bytes32[](20);
+        pathIndices = new uint256[](20);
+        // Fill with zeros (dummy proof for test mode)
+        for (uint256 i = 0; i < 20; i++) {
+            merkleProof[i] = bytes32(0);
+            pathIndices[i] = 0;
+        }
+        zkProof = abi.encodePacked(bytes32(uint256(1)), bytes32(uint256(2)));
     }
 
     /**
@@ -291,10 +352,10 @@ contract GhostHandler is Test {
         vm.prank(address(ghostToken.nativeTokenVault()));
         ghostToken.bridgeMint(actor, amount);
 
-        // Generate voucher
+        // Generate voucher using keccak256 (test-only, production uses Poseidon off-chain)
         bytes32 secret = keccak256(abi.encodePacked("secret", secretSeed, block.timestamp));
         bytes32 nullifier = keccak256(abi.encodePacked("nullifier", secretSeed, block.timestamp));
-        bytes32 commitment = GhostHash.computeCommitment(secret, nullifier, amount, address(ghostToken));
+        bytes32 commitment = _computeTestCommitment(secret, nullifier, amount, address(ghostToken));
 
         // Ghost tokens
         vm.prank(actor);
@@ -312,9 +373,10 @@ contract GhostHandler is Test {
 
         // Update tracking
         ghostCallCount++;
-        bytes32 newRoot = commitmentTree.getRoot();
-        historicalRoots.push(newRoot);
         maxLeafIndexSeen = commitmentTree.getNextLeafIndex();
+
+        // Submit root after ghost (simulating relayer behavior)
+        _submitCurrentRoot();
     }
 
     /**
@@ -349,15 +411,11 @@ contract GhostHandler is Test {
         Voucher storage voucher = vouchers[voucherIndex];
         address recipient = actors[recipientSeed % NUM_ACTORS];
 
-        // Build merkle proof (simplified - uses zero values)
+        // Get a known root for verification
         bytes32 merkleRoot = commitmentTree.getRoot();
-        bytes32[] memory merkleProof = new bytes32[](20);
-        uint256[] memory pathIndices = new uint256[](20);
-        for (uint256 i = 0; i < 20; i++) {
-            merkleProof[i] = commitmentTree.getZeroValue(i);
-            pathIndices[i] = 0;
-        }
-        bytes memory zkProof = abi.encodePacked(bytes32(uint256(1)), bytes32(uint256(2)));
+
+        // Build dummy merkle proof (test mode verifier accepts any proof)
+        (bytes32[] memory merkleProof, uint256[] memory pathIndices, bytes memory zkProof) = _buildDummyProof();
 
         // Attempt redemption
         ghostToken.redeem(

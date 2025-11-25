@@ -6,7 +6,6 @@ import {GhostERC20Harness} from "./helpers/GhostERC20Harness.sol";
 import {CommitmentTree} from "../../../contracts/ghost/CommitmentTree.sol";
 import {NullifierRegistry} from "../../../contracts/ghost/NullifierRegistry.sol";
 import {GhostVerifier} from "../../../contracts/ghost/GhostVerifier.sol";
-import {GhostHash} from "../../../contracts/ghost/libraries/GhostHash.sol";
 
 /**
  * @title GhostTokenFlowE2E
@@ -18,6 +17,9 @@ import {GhostHash} from "../../../contracts/ghost/libraries/GhostHash.sol";
  * 2. Partial redeem with change (split voucher)
  * 3. Multi-user anonymity set demonstration
  * 4. Security edge cases (double-spend, stale roots, etc.)
+ *
+ * Note: With off-chain tree architecture, commitments are stored on-chain
+ * and roots are submitted by an authorized relayer. Tests simulate this flow.
  */
 contract GhostTokenFlowE2E is Test {
     GhostERC20Harness public ghostToken;
@@ -38,16 +40,25 @@ contract GhostTokenFlowE2E is Test {
     address public constant ORIGIN_TOKEN = address(0xBEEF);
     uint256 public constant INITIAL_MINT = 10000 ether;
 
+    // Precomputed initial root for empty tree (Z20 - must match SDK)
+    bytes32 constant INITIAL_ROOT = bytes32(0x0b4a6c626bd085f652fb17cad5b70c9db903266b5a3f456ea6373a3cf97f3453);
+
+    // Root counter for unique test roots
+    uint256 private rootCounter;
+
     // Events
     event Ghosted(address indexed from, uint256 amount, bytes32 indexed commitment, uint256 leafIndex);
     event Redeemed(uint256 amount, address indexed recipient, bytes32 indexed nullifier);
     event PartialRedeemed(uint256 redeemAmount, address indexed recipient, bytes32 indexed oldNullifier, bytes32 indexed newCommitment, uint256 newLeafIndex);
 
     function setUp() public {
-        // Deploy infrastructure
-        tree = new CommitmentTree();
+        // Deploy infrastructure with initial root
+        tree = new CommitmentTree(INITIAL_ROOT);
         nullifierRegistry = new NullifierRegistry();
         verifier = new GhostVerifier(true); // Test mode - accepts all proofs
+
+        // Set relayer as root submitter
+        tree.setRootSubmitter(relayer);
 
         // Deploy ghost token
         ghostToken = new GhostERC20Harness();
@@ -82,7 +93,7 @@ contract GhostTokenFlowE2E is Test {
     /**
      * @notice Build dummy merkle proof (for test verifier)
      */
-    function _buildDummyProof() internal view returns (
+    function _buildDummyProof() internal pure returns (
         bytes32[] memory merkleProof,
         uint256[] memory pathIndices,
         bytes memory zkProof
@@ -90,7 +101,7 @@ contract GhostTokenFlowE2E is Test {
         merkleProof = new bytes32[](20);
         pathIndices = new uint256[](20);
         for (uint256 i = 0; i < 20; i++) {
-            merkleProof[i] = tree.getZeroValue(i);
+            merkleProof[i] = bytes32(0);
             pathIndices[i] = 0;
         }
         zkProof = abi.encodePacked(bytes32(uint256(1)), bytes32(uint256(2)));
@@ -98,6 +109,7 @@ contract GhostTokenFlowE2E is Test {
 
     /**
      * @notice Create a voucher (secret + nullifier + commitment)
+     * @dev Uses keccak256 for testing; production uses Poseidon off-chain
      */
     function _createVoucher(string memory seed, uint256 amount) internal view returns (
         bytes32 secret,
@@ -106,7 +118,25 @@ contract GhostTokenFlowE2E is Test {
     ) {
         secret = keccak256(abi.encodePacked(seed, "_secret"));
         nullifier = keccak256(abi.encodePacked(seed, "_nullifier"));
-        commitment = GhostHash.computeCommitment(secret, nullifier, amount, address(ghostToken));
+        commitment = keccak256(abi.encodePacked(secret, nullifier, amount, address(ghostToken)));
+    }
+
+    /**
+     * @notice Generate a unique test root
+     */
+    function _generateUniqueRoot() internal returns (bytes32) {
+        rootCounter++;
+        return keccak256(abi.encodePacked("test_root_", rootCounter));
+    }
+
+    /**
+     * @notice Submit a root for the current commitment count
+     */
+    function _submitCurrentRoot() internal returns (bytes32 newRoot) {
+        newRoot = _generateUniqueRoot();
+        uint256 leafCount = tree.getCommitmentCount();
+        vm.prank(relayer);
+        tree.submitRoot(newRoot, leafCount);
     }
 
     // =========================================================================
@@ -146,11 +176,13 @@ contract GhostTokenFlowE2E is Test {
         console2.log("Alice balance after ghost:", ghostToken.balanceOf(alice) / 1e18, "tokens");
         console2.log("Supply after ghost:", ghostToken.totalSupply() / 1e18, "tokens");
 
+        // === RELAYER SUBMITS ROOT ===
+        bytes32 merkleRoot = _submitCurrentRoot();
+
         // === REDEEM PHASE ===
         console2.log("\n=== REDEEM PHASE ===");
         console2.log("Bob balance before redeem:", bobInitial / 1e18, "tokens");
 
-        bytes32 merkleRoot = tree.getRoot();
         (bytes32[] memory merkleProof, uint256[] memory pathIndices, bytes memory zkProof) = _buildDummyProof();
 
         // Relayer submits redeem on behalf of Bob (privacy pattern)
@@ -201,10 +233,11 @@ contract GhostTokenFlowE2E is Test {
         assertEq(ghosted1, amount1 + amount2, "Both amounts ghosted");
         assertEq(outstanding1, amount1 + amount2, "Both amounts outstanding");
 
-        // Redeem first voucher
-        bytes32 root = tree.getRoot();
+        // Relayer submits root
+        bytes32 root = _submitCurrentRoot();
         (bytes32[] memory proof, uint256[] memory indices, bytes memory zk) = _buildDummyProof();
 
+        // Redeem first voucher
         ghostToken.redeem(amount1, bob, nullifier1, root, proof, indices, zk);
 
         // Verify after first redeem
@@ -251,10 +284,11 @@ contract GhostTokenFlowE2E is Test {
         uint256 oldLeafIndex = ghostToken.ghost(originalAmount, oldCommitment);
         assertEq(oldLeafIndex, 0);
 
-        // === PARTIAL REDEEM PHASE ===
-        bytes32 merkleRoot = tree.getRoot();
+        // Relayer submits root
+        bytes32 merkleRoot = _submitCurrentRoot();
         (bytes32[] memory proof, uint256[] memory indices, bytes memory zk) = _buildDummyProof();
 
+        // === PARTIAL REDEEM PHASE ===
         vm.expectEmit(true, true, true, true);
         emit PartialRedeemed(redeemAmount, bob, oldNullifier, newCommitment, 1);
 
@@ -277,7 +311,7 @@ contract GhostTokenFlowE2E is Test {
         assertTrue(nullifierRegistry.isSpent(oldNullifier), "Old nullifier spent");
 
         // === REDEEM REMAINING ===
-        merkleRoot = tree.getRoot(); // Get updated root with new commitment
+        merkleRoot = _submitCurrentRoot(); // Get updated root with new commitment
 
         vm.expectEmit(true, true, true, true);
         emit Redeemed(remainingAmount, charlie, newNullifier);
@@ -311,7 +345,7 @@ contract GhostTokenFlowE2E is Test {
         vm.prank(alice);
         ghostToken.ghost(originalAmount, commitment1);
 
-        bytes32 merkleRoot = tree.getRoot();
+        bytes32 merkleRoot = _submitCurrentRoot();
         (bytes32[] memory proof, uint256[] memory indices, bytes memory zk) = _buildDummyProof();
 
         // Split 1: 300 to Bob, 700 remaining
@@ -320,13 +354,13 @@ contract GhostTokenFlowE2E is Test {
         assertEq(ghostToken.balanceOf(bob), INITIAL_MINT + 300 ether);
 
         // Split 2: 400 to Charlie, 300 remaining
-        merkleRoot = tree.getRoot();
+        merkleRoot = _submitCurrentRoot();
         (, bytes32 nullifier3, bytes32 commitment3) = _createVoucher("split-3", 300 ether);
         ghostToken.redeemPartial(400 ether, 700 ether, charlie, nullifier2, commitment3, merkleRoot, proof, indices, zk);
         assertEq(ghostToken.balanceOf(charlie), INITIAL_MINT + 400 ether);
 
         // Final: 300 to Alice (self-redeem)
-        merkleRoot = tree.getRoot();
+        merkleRoot = _submitCurrentRoot();
         ghostToken.redeem(300 ether, alice, nullifier3, merkleRoot, proof, indices, zk);
 
         // Verify total
@@ -364,10 +398,12 @@ contract GhostTokenFlowE2E is Test {
         // Verify anonymity set size
         assertEq(ghostToken.totalGhosted(), amount * 3, "3 users in anonymity set");
 
+        // Relayer submits root
+        bytes32 merkleRoot = _submitCurrentRoot();
+        (bytes32[] memory proof, uint256[] memory indices, bytes memory zk) = _buildDummyProof();
+
         // Bob redeems via relayer to new address
         address bobNewWallet = makeAddr("bob-new-wallet");
-        bytes32 merkleRoot = tree.getRoot();
-        (bytes32[] memory proof, uint256[] memory indices, bytes memory zk) = _buildDummyProof();
 
         vm.prank(relayer); // Relayer submits tx (not Bob!)
         ghostToken.redeem(amount, bobNewWallet, nullifierB, merkleRoot, proof, indices, zk);
@@ -400,7 +436,7 @@ contract GhostTokenFlowE2E is Test {
         vm.prank(alice);
         ghostToken.ghost(amount, commitment);
 
-        bytes32 root = tree.getRoot();
+        bytes32 root = _submitCurrentRoot();
         (bytes32[] memory proof, uint256[] memory indices, bytes memory zk) = _buildDummyProof();
 
         // Random attacker tries to "front-run" by submitting the tx
@@ -428,7 +464,7 @@ contract GhostTokenFlowE2E is Test {
         vm.prank(alice);
         ghostToken.ghost(amount, commitment);
 
-        bytes32 root = tree.getRoot();
+        bytes32 root = _submitCurrentRoot();
         (bytes32[] memory proof, uint256[] memory indices, bytes memory zk) = _buildDummyProof();
 
         // First redemption succeeds
@@ -458,7 +494,7 @@ contract GhostTokenFlowE2E is Test {
         assertFalse(tree.isKnownRoot(fabricatedRoot), "Fabricated root should not be known");
 
         // But real root should still be valid
-        bytes32 realRoot = tree.getRoot();
+        bytes32 realRoot = _submitCurrentRoot();
         assertTrue(tree.isKnownRoot(realRoot), "Real root should be known");
 
         // Try to redeem with fabricated root - should fail
@@ -478,7 +514,7 @@ contract GhostTokenFlowE2E is Test {
         vm.prank(alice);
         ghostToken.ghost(100 ether, commitment1);
 
-        bytes32 oldRoot = tree.getRoot();
+        bytes32 oldRoot = _submitCurrentRoot();
 
         // Add many more commitments
         for (uint256 i = 0; i < 50; i++) {
@@ -486,6 +522,9 @@ contract GhostTokenFlowE2E is Test {
             vm.prank(alice);
             ghostToken.ghost(1 ether, c);
         }
+
+        // Submit new root
+        _submitCurrentRoot();
 
         // Old root should STILL be valid (this is by design)
         assertTrue(tree.isKnownRoot(oldRoot), "Old root should remain valid");
@@ -518,7 +557,7 @@ contract GhostTokenFlowE2E is Test {
         vm.prank(alice);
         ghostToken.ghost(amount, commitment);
 
-        bytes32 root = tree.getRoot();
+        bytes32 root = _submitCurrentRoot();
         (bytes32[] memory proof, uint256[] memory indices, bytes memory zk) = _buildDummyProof();
 
         vm.expectRevert(GhostERC20Harness.ZeroAddress.selector);
@@ -535,7 +574,7 @@ contract GhostTokenFlowE2E is Test {
         vm.prank(alice);
         ghostToken.ghost(originalAmount, commitment);
 
-        bytes32 root = tree.getRoot();
+        bytes32 root = _submitCurrentRoot();
         (bytes32[] memory proof, uint256[] memory indices, bytes memory zk) = _buildDummyProof();
 
         bytes32 newCommitment = keccak256("new");
@@ -557,12 +596,15 @@ contract GhostTokenFlowE2E is Test {
     /**
      * @notice Test that different secrets produce different nullifiers
      */
-    function test_Security_NullifierUniqueness() public {
+    function test_Security_NullifierUniqueness() public pure {
         uint256 amount = 100 ether;
 
         // Two different vouchers with same amount
-        (,bytes32 nullifierA,) = _createVoucher("user-a", amount);
-        (,bytes32 nullifierB,) = _createVoucher("user-b", amount);
+        bytes32 secretA = keccak256(abi.encodePacked("user-a", "_secret"));
+        bytes32 nullifierA = keccak256(abi.encodePacked("user-a", "_nullifier"));
+
+        bytes32 secretB = keccak256(abi.encodePacked("user-b", "_secret"));
+        bytes32 nullifierB = keccak256(abi.encodePacked("user-b", "_nullifier"));
 
         // Nullifiers must be different
         assertNotEq(nullifierA, nullifierB, "Nullifiers should be unique");
@@ -585,9 +627,9 @@ contract GhostTokenFlowE2E is Test {
         uint256 gasUsed = gasBefore - gasleft();
 
         console2.log("Gas used for ghost():", gasUsed);
-        // Note: Gas in test env includes Merkle tree insertion with Poseidon hashing
-        // Production deployment on zkSync may differ significantly
-        assertLt(gasUsed, 3000000, "Ghost should use < 3M gas in test env");
+        // Note: With off-chain tree, ghost is much cheaper (no Poseidon hashing)
+        // Gas includes ERC20 burn + commitment insertion (cold storage)
+        assertLt(gasUsed, 110000, "Ghost should use < 110K gas with off-chain tree");
     }
 
     /**
@@ -600,7 +642,7 @@ contract GhostTokenFlowE2E is Test {
         vm.prank(alice);
         ghostToken.ghost(amount, commitment);
 
-        bytes32 root = tree.getRoot();
+        bytes32 root = _submitCurrentRoot();
         (bytes32[] memory proof, uint256[] memory indices, bytes memory zk) = _buildDummyProof();
 
         uint256 gasBefore = gasleft();
@@ -608,7 +650,7 @@ contract GhostTokenFlowE2E is Test {
         uint256 gasUsed = gasBefore - gasleft();
 
         console2.log("Gas used for redeem():", gasUsed);
-        assertLt(gasUsed, 450000, "Redeem should use < 450K gas");
+        assertLt(gasUsed, 200000, "Redeem should use < 200K gas with test verifier");
     }
 
     /**
@@ -623,7 +665,7 @@ contract GhostTokenFlowE2E is Test {
         vm.prank(alice);
         ghostToken.ghost(originalAmount, commitment);
 
-        bytes32 root = tree.getRoot();
+        bytes32 root = _submitCurrentRoot();
         (bytes32[] memory proof, uint256[] memory indices, bytes memory zk) = _buildDummyProof();
 
         uint256 gasBefore = gasleft();
@@ -641,8 +683,7 @@ contract GhostTokenFlowE2E is Test {
         uint256 gasUsed = gasBefore - gasleft();
 
         console2.log("Gas used for redeemPartial():", gasUsed);
-        // Note: Gas in test env includes Merkle tree insertion with Poseidon hashing
-        // Production deployment on zkSync may differ significantly
-        assertLt(gasUsed, 3000000, "Partial redeem should use < 3M gas in test env");
+        // Note: With off-chain tree, partial redeem is much cheaper
+        assertLt(gasUsed, 250000, "Partial redeem should use < 250K gas with test verifier");
     }
 }

@@ -1,0 +1,27 @@
+{
+  "network": "umbraline",
+  "chainId": 5448,
+  "timestamp": "2025-11-25T03:39:22.587Z",
+  "contracts": {
+    "RedeemVerifier": "0x75FC40a8569a11070f831CFaFe2e66Ff4120767d",
+    "PartialRedeemVerifier": "0xc925014acF9a9A80aD7740D3dE5B88cCaBb86981",
+    "GhostVerifierProxy": "0x238b0e95fD20A544D0f085b2f103528B74529Ec1",
+    "NullifierRegistry": "0x86D815CEBda3Ee77C3325A9BDd96F171c27613BE",
+    "PoseidonT3": "0x5F3a4d9C2e2f98B5a05F8014e04192Fd1C39D6A1",
+    "CommitmentTree": "0x456e224ADe45E4C4809F89D03C92Df65165f86CA",
+    "GhostERC20_Implementation": "0xbFaF8231ED01e2631AfFE7F5e3c6d85006B8b33F",
+    "GhostERC20_Proxy": "0xB4D01F758b7725a7190F5db700Fc081c44Ec626a"
+  },
+  "tokenConfig": {
+    "name": "Ghost Test Token",
+    "symbol": "gTEST",
+    "decimals": 18
+  },
+  "verified": {
+    "isTestContract": false,
+    "hashFunction": "poseidon",
+    "zeroHashesVerified": true,
+    "initialRootVerified": true,
+    "authorizationsCorrect": true
+  }
+}

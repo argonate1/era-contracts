@@ -6,7 +6,6 @@ import {GhostERC20Harness} from "../helpers/GhostERC20Harness.sol";
 import {CommitmentTree} from "../../../../contracts/ghost/CommitmentTree.sol";
 import {NullifierRegistry} from "../../../../contracts/ghost/NullifierRegistry.sol";
 import {GhostVerifier} from "../../../../contracts/ghost/GhostVerifier.sol";
-import {GhostHash} from "../../../../contracts/ghost/libraries/GhostHash.sol";
 
 /**
  * @title GhostE2EBase
@@ -16,8 +15,11 @@ import {GhostHash} from "../../../../contracts/ghost/libraries/GhostHash.sol";
  * This test harness simulates production behavior:
  * - Full contract deployment matching production deployment script
  * - Realistic user interactions with multiple actors
- * - Merkle proof generation matching SDK behavior
+ * - Off-chain tree architecture with relayer root submission
  * - ZK proof simulation (test mode verifier)
+ *
+ * Note: With off-chain tree architecture, commitments are stored on-chain
+ * and roots are submitted by an authorized relayer.
  */
 abstract contract GhostE2EBase is Test {
     // ============ Core Infrastructure ============
@@ -43,6 +45,12 @@ abstract contract GhostE2EBase is Test {
     bytes32 public constant WETH_ASSET_ID = keccak256("WETH_ASSET");
     address public constant MOCK_L1_USDC = address(0xA0B86a33e6441b8dE7FBC53b9a7d45B2E3d8b3A6);
     address public constant MOCK_L1_WETH = address(0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2);
+
+    // Precomputed initial root for empty tree (Z20 - must match SDK)
+    bytes32 constant INITIAL_ROOT = bytes32(0x0b4a6c626bd085f652fb17cad5b70c9db903266b5a3f456ea6373a3cf97f3453);
+
+    // Root counter for unique test roots
+    uint256 private rootCounter;
 
     // ============ Voucher Structure (mirrors SDK) ============
     struct Voucher {
@@ -92,8 +100,11 @@ abstract contract GhostE2EBase is Test {
     }
 
     function _deployInfrastructure() internal {
-        // 1. Deploy CommitmentTree
-        commitmentTree = new CommitmentTree();
+        // 1. Deploy CommitmentTree with initial root
+        commitmentTree = new CommitmentTree(INITIAL_ROOT);
+
+        // Set relayer as root submitter
+        commitmentTree.setRootSubmitter(relayer);
 
         // 2. Deploy NullifierRegistry
         nullifierRegistry = new NullifierRegistry();
@@ -153,7 +164,21 @@ abstract contract GhostE2EBase is Test {
     }
 
     /**
+     * @notice Compute a test commitment using keccak256 (for testing only)
+     * @dev In production, commitments are computed off-chain using Poseidon
+     */
+    function _computeTestCommitment(
+        bytes32 secret,
+        bytes32 nullifier,
+        uint256 amount,
+        address token
+    ) internal pure returns (bytes32) {
+        return keccak256(abi.encodePacked(secret, nullifier, amount, token));
+    }
+
+    /**
      * @notice Generate a random voucher (mimics SDK behavior)
+     * @dev Uses keccak256 for testing; production uses Poseidon off-chain
      */
     function _generateVoucher(
         address token,
@@ -162,7 +187,7 @@ abstract contract GhostE2EBase is Test {
     ) internal view returns (Voucher memory) {
         bytes32 secret = keccak256(abi.encodePacked(block.timestamp, msg.sender, leafIndex, "secret"));
         bytes32 nullifier = keccak256(abi.encodePacked(block.timestamp, msg.sender, leafIndex, "nullifier"));
-        bytes32 commitment = GhostHash.computeCommitment(secret, nullifier, amount, token);
+        bytes32 commitment = _computeTestCommitment(secret, nullifier, amount, token);
 
         return Voucher({
             secret: secret,
@@ -179,21 +204,36 @@ abstract contract GhostE2EBase is Test {
     }
 
     /**
-     * @notice Build Merkle proof for a leaf
-     * @dev Simplified - uses zero values for siblings (valid for first insertions)
+     * @notice Generate a unique test root
      */
-    function _buildMerkleProof(uint256 leafIndex) internal view returns (
+    function _generateUniqueRoot() internal returns (bytes32) {
+        rootCounter++;
+        return keccak256(abi.encodePacked("test_root_", rootCounter));
+    }
+
+    /**
+     * @notice Submit a root for the current commitment count
+     */
+    function _submitCurrentRoot() internal returns (bytes32 newRoot) {
+        newRoot = _generateUniqueRoot();
+        uint256 leafCount = commitmentTree.getCommitmentCount();
+        vm.prank(relayer);
+        commitmentTree.submitRoot(newRoot, leafCount);
+    }
+
+    /**
+     * @notice Build dummy Merkle proof (for test verifier)
+     */
+    function _buildMerkleProof(uint256 /*leafIndex*/) internal pure returns (
         bytes32[] memory pathElements,
         uint256[] memory pathIndices
     ) {
         pathElements = new bytes32[](TREE_DEPTH);
         pathIndices = new uint256[](TREE_DEPTH);
 
-        uint256 currentIndex = leafIndex;
         for (uint256 i = 0; i < TREE_DEPTH; i++) {
-            pathElements[i] = commitmentTree.getZeroValue(i);
-            pathIndices[i] = currentIndex % 2;
-            currentIndex = currentIndex / 2;
+            pathElements[i] = bytes32(0);
+            pathIndices[i] = 0;
         }
     }
 
@@ -231,7 +271,8 @@ abstract contract GhostE2EBase is Test {
         address recipient,
         address submitter
     ) internal {
-        bytes32 merkleRoot = commitmentTree.getRoot();
+        // Submit root first
+        bytes32 merkleRoot = _submitCurrentRoot();
         (bytes32[] memory pathElements, uint256[] memory pathIndices) = _buildMerkleProof(voucher.leafIndex);
         bytes memory zkProof = _generateDummyProof();
 
@@ -257,7 +298,8 @@ abstract contract GhostE2EBase is Test {
         address recipient,
         address submitter
     ) internal returns (Voucher memory newVoucher) {
-        bytes32 merkleRoot = commitmentTree.getRoot();
+        // Submit root first
+        bytes32 merkleRoot = _submitCurrentRoot();
         (bytes32[] memory pathElements, uint256[] memory pathIndices) = _buildMerkleProof(voucher.leafIndex);
         bytes memory zkProof = _generateDummyProof();
 

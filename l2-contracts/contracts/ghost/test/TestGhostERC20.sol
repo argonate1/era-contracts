@@ -216,4 +216,20 @@ contract TestGhostERC20 is IGhostERC20 {
         totalSupply -= amount;
         emit Transfer(from, address(0), amount);
     }
+
+    // =========================================================================
+    // Contract Type Discriminator (for deployment verification)
+    // =========================================================================
+
+    /// @notice Indicates this is a TEST contract (not production)
+    /// @return true for test contracts, false for production contracts
+    function isTestContract() external pure returns (bool) {
+        return true;
+    }
+
+    /// @notice Returns the hash function used by this contract
+    /// @return "keccak256" for test (via TestGhostHash), "poseidon" for production
+    function hashFunction() external pure returns (string memory) {
+        return "keccak256";
+    }
 }

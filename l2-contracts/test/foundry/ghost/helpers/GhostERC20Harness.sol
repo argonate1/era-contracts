@@ -3,7 +3,6 @@ pragma solidity 0.8.28;
 
 import {ERC20PermitUpgradeable} from "@openzeppelin/contracts-upgradeable-v4/token/ERC20/extensions/draft-ERC20PermitUpgradeable.sol";
 import {IGhostERC20, IGhostCommitmentTree, IGhostNullifierRegistry, IGhostVerifier} from "../../../../contracts/ghost/interfaces/IGhostContracts.sol";
-import {GhostHash} from "../../../../contracts/ghost/libraries/GhostHash.sol";
 
 /// @title GhostERC20Harness
 /// @notice Test-only version of GhostERC20 without _disableInitializers() in constructor
@@ -236,15 +235,6 @@ contract GhostERC20Harness is ERC20PermitUpgradeable, IGhostERC20 {
         ghosted = totalGhosted;
         redeemed = totalRedeemed;
         outstanding = totalGhosted - totalRedeemed;
-    }
-
-    /// @notice Helper to compute a commitment
-    function computeCommitment(
-        bytes32 secret,
-        bytes32 nullifier,
-        uint256 amount
-    ) external view returns (bytes32) {
-        return GhostHash.computeCommitment(secret, nullifier, amount, address(this));
     }
 
     /// @notice Get the L1 origin token address
