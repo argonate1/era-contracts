@@ -8,13 +8,13 @@ include "./merkle.circom";
 // =============================================================================
 // This circuit proves:
 // 1. The prover knows a valid commitment in the Merkle tree
-// 2. The prover knows the secret and nullifier that created the commitment
+// 2. The prover knows the secret that created the commitment
 // 3. The commitment matches the claimed amount and token
-// 4. The nullifier is correctly computed for double-spend prevention
+// 4. The proof is bound to a specific recipient (prevents front-running)
 //
 // PUBLIC INPUTS:
 // - merkleRoot: The Merkle root of the commitment tree
-// - nullifier: The nullifier to prevent double-spending
+// - nullifier: Random value included in commitment for double-spend prevention
 // - amount: The amount being redeemed
 // - tokenAddress: The token being redeemed
 // - recipient: The address receiving the tokens
@@ -23,6 +23,10 @@ include "./merkle.circom";
 // - secret: The random secret known only to the voucher holder
 // - pathElements: Merkle path siblings
 // - pathIndices: Merkle path direction indicators
+//
+// SECURITY: The nullifier is a random value stored in the commitment. When
+// revealed at redeem time, the contract tracks it to prevent double-spending.
+// This follows the Tornado Cash design pattern where nullifier is random.
 // =============================================================================
 
 template GhostRedeem(levels) {

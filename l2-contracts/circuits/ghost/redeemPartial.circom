@@ -9,14 +9,15 @@ include "node_modules/circomlib/circuits/comparators.circom";
 // =============================================================================
 // This circuit proves:
 // 1. The prover knows a valid commitment in the Merkle tree
-// 2. The prover knows the secret and nullifier for the original commitment
-// 3. The original commitment matches the claimed original amount
-// 4. redeemAmount <= originalAmount (partial or full redemption)
-// 5. A new commitment is correctly formed for the remaining balance
+// 2. The prover knows the secret for the original commitment
+// 3. The original nullifier is correctly derived from (oldSecret, oldLeafIndex)
+// 4. The original commitment matches the claimed original amount
+// 5. redeemAmount <= originalAmount (partial or full redemption)
+// 6. A new commitment is correctly formed for the remaining balance
 //
 // PUBLIC INPUTS:
 // - merkleRoot: The Merkle root of the commitment tree
-// - oldNullifier: The nullifier of the commitment being partially redeemed
+// - oldNullifier: Hash of (oldSecret, oldLeafIndex) for double-spend prevention
 // - redeemAmount: The amount being redeemed now
 // - tokenAddress: The token being redeemed
 // - recipient: The address receiving the tokens
@@ -25,10 +26,14 @@ include "node_modules/circomlib/circuits/comparators.circom";
 //
 // PRIVATE INPUTS:
 // - oldSecret: The secret for the original commitment
+// - oldLeafIndex: Position of original commitment in tree (for nullifier derivation)
 // - newSecret: Random secret for the new commitment (if partial)
 // - newNullifier: Nullifier for the new commitment (if partial)
 // - pathElements: Merkle path siblings
 // - pathIndices: Merkle path direction indicators
+//
+// SECURITY: The oldNullifier MUST be derived from (oldSecret, oldLeafIndex) to
+// prevent malicious provers from using arbitrary nullifiers for double-spend.
 // =============================================================================
 
 template GhostRedeemPartial(levels) {
@@ -47,6 +52,7 @@ template GhostRedeemPartial(levels) {
     // PRIVATE INPUTS
     // =========================================================================
     signal input oldSecret;         // Secret for original commitment
+    signal input oldLeafIndex;      // Position in tree - used for nullifier derivation
     signal input newSecret;         // Secret for new commitment (can be 0 if full redeem)
     signal input newNullifier;      // Nullifier for new commitment (can be 0 if full redeem)
     signal input pathElements[levels];
@@ -73,7 +79,20 @@ template GhostRedeemPartial(levels) {
     merkleChecker.root <== merkleRoot;
 
     // =========================================================================
-    // STEP 3: Verify redeemAmount <= originalAmount
+    // STEP 3: Verify oldNullifier derivation (CRITICAL SECURITY CONSTRAINT)
+    // The oldNullifier MUST be derived from (oldSecret, oldLeafIndex) to prevent
+    // malicious provers from using arbitrary nullifiers for double-spend.
+    // oldNullifier = Poseidon2(oldSecret, oldLeafIndex)
+    // =========================================================================
+    component oldNullifierHasher = NullifierHash();
+    oldNullifierHasher.secret <== oldSecret;
+    oldNullifierHasher.leafIndex <== oldLeafIndex;
+
+    // CRITICAL: Constrain public oldNullifier to equal computed value
+    oldNullifier === oldNullifierHasher.hash;
+
+    // =========================================================================
+    // STEP 4: Verify redeemAmount <= originalAmount
     // =========================================================================
     component lte = LessEqThan(252); // 252 bits is enough for any token amount
     lte.in[0] <== redeemAmount;
@@ -81,13 +100,13 @@ template GhostRedeemPartial(levels) {
     lte.out === 1;
 
     // =========================================================================
-    // STEP 4: Compute remaining amount
+    // STEP 5: Compute remaining amount
     // =========================================================================
     signal remainingAmount;
     remainingAmount <== originalAmount - redeemAmount;
 
     // =========================================================================
-    // STEP 5: Verify new commitment is correct (if there's remaining balance)
+    // STEP 6: Verify new commitment is correct (if there's remaining balance)
     // =========================================================================
     // Compute what the new commitment should be
     component newCommitmentHasher = GhostCommitment();
@@ -109,7 +128,7 @@ template GhostRedeemPartial(levels) {
     newCommitment === expectedNewCommitment;
 
     // =========================================================================
-    // STEP 6: Bind proof to recipient
+    // STEP 7: Bind proof to recipient
     // =========================================================================
     signal recipientSquare;
     recipientSquare <== recipient * recipient;

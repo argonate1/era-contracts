@@ -1,0 +1,20 @@
+{
+  "network": "umbraline",
+  "chainId": 5447,
+  "timestamp": "2025-11-25T23:19:54.580Z",
+  "deploymentType": "production-groth16",
+  "deployer": "0x2AA016C6c0756A6c1d13c1183E9F552815E3a95c",
+  "contracts": {
+    "RedeemVerifierWorking": "0x2721B56aa3168964e055F02b374a9D5328fb0e15",
+    "PartialRedeemVerifier": "0xe6F4A586d0B6A92C3f4bEF25B725B2DEc512d67B",
+    "GhostVerifierProxy": "0xFc5a8C6bf0D4c85f3d25dFcAF955Dc8Af1b04Db3",
+    "CommitmentTree": "0x456e224ADe45E4C4809F89D03C92Df65165f86CA",
+    "NullifierRegistry": "0xbFaF8231ED01e2631AfFE7F5e3c6d85006B8b33F",
+    "TestGhostERC20": "0x2a1aaee151070ea12B69044bfFEF51E3FE12048A"
+  },
+  "verified": {
+    "isTestContract": false,
+    "hashFunction": "poseidon",
+    "zkProofSystem": "groth16"
+  }
+}

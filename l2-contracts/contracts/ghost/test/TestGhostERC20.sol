@@ -217,6 +217,11 @@ contract TestGhostERC20 is IGhostERC20 {
         emit Transfer(from, address(0), amount);
     }
 
+    /// @notice Update the verifier (for testing/upgrades)
+    function setVerifier(address _verifier) external onlyOwner {
+        verifier = IGhostVerifier(_verifier);
+    }
+
     // =========================================================================
     // Contract Type Discriminator (for deployment verification)
     // =========================================================================

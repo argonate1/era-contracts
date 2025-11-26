@@ -54,6 +54,8 @@
     "deploy-consensus-registry": "ts-node src/deploy-consensus-registry.ts"
   },
   "dependencies": {
-    "dotenv": "^16.0.3"
+    "dotenv": "^16.0.3",
+    "poseidon-lite": "^0.3.0",
+    "snarkjs": "^0.7.5"
   }
 }

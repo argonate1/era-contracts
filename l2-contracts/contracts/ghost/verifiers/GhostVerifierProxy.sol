@@ -2,7 +2,7 @@
 pragma solidity 0.8.28;
 
 import {IGhostVerifier} from "../interfaces/IGhostContracts.sol";
-import {RedeemVerifier} from "./RedeemVerifier.sol";
+import {RedeemVerifierWorking} from "./RedeemVerifierWorking.sol";
 import {PartialRedeemVerifier} from "./PartialRedeemVerifier.sol";
 
 /// @title GhostVerifierProxy
@@ -20,7 +20,7 @@ import {PartialRedeemVerifier} from "./PartialRedeemVerifier.sol";
 /// @custom:security-contact security@ghostprotocol.xyz
 contract GhostVerifierProxy is IGhostVerifier {
     /// @notice The Groth16 verifier for full redemptions
-    RedeemVerifier public immutable redeemVerifier;
+    RedeemVerifierWorking public immutable redeemVerifier;
 
     /// @notice The Groth16 verifier for partial redemptions
     PartialRedeemVerifier public immutable partialRedeemVerifier;
@@ -50,7 +50,7 @@ contract GhostVerifierProxy is IGhostVerifier {
             revert ZeroAddress();
         }
         owner = msg.sender;
-        redeemVerifier = RedeemVerifier(_redeemVerifier);
+        redeemVerifier = RedeemVerifierWorking(_redeemVerifier);
         partialRedeemVerifier = PartialRedeemVerifier(_partialRedeemVerifier);
     }
 
